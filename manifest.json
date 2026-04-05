@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Edge Voice Reader",
+  "description": "Read pages and selected text with Microsoft Edge voices and remember your voice and speed.",
+  "version": "0.5.0",
+  "permissions": [
+    "tts",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Edge Voice Reader"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "reader_core.js",
+        "page_reader_core.js",
+        "page_reader_content.js"
+      ],
+      "css": [
+        "page_reader_page.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "read-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Read the current selection with the saved Edge voice"
+    },
+    "stop-reading": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "Stop the current Edge voice playback"
+    }
+  }
+}

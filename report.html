@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edge Voice Reader Run Report</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef4fb;
+        --panel: rgba(255, 255, 255, 0.94);
+        --line: rgba(21, 36, 58, 0.12);
+        --ink: #15243a;
+        --muted: #5d6d83;
+        --accent: #0f6cbd;
+        --danger: #b42318;
+        --shadow: 0 24px 54px rgba(22, 44, 70, 0.14);
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI Variable", "Aptos", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(15, 108, 189, 0.14), transparent 38%),
+          linear-gradient(180deg, #eef4fb 0%, #f8fbff 100%);
+        color: var(--ink);
+      }
+
+      .shell {
+        width: min(1060px, calc(100vw - 40px));
+        margin: 20px auto;
+        display: grid;
+        gap: 16px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+
+      .hero {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 6px 0 0;
+        font-size: 30px;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+
+      .subtitle,
+      .panel-note,
+      .feedback {
+        margin-top: 8px;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .hero-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      button {
+        border: 1px solid transparent;
+        border-radius: 999px;
+        padding: 10px 14px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .secondary {
+        background: #fff;
+        color: var(--ink);
+        border-color: var(--line);
+      }
+
+      .danger {
+        background: #fff4f2;
+        color: var(--danger);
+        border-color: rgba(180, 35, 24, 0.18);
+      }
+
+      .summary-grid,
+      .counter-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .counter-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .card,
+      .event-item,
+      .empty-state {
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.7);
+        padding: 14px;
+      }
+
+      .label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .value {
+        margin-top: 6px;
+        font-size: 16px;
+        line-height: 1.4;
+      }
+
+      .counter-value {
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .event-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .event-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .event-title {
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .event-time {
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .event-surface {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .chips {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(15, 108, 189, 0.08);
+        color: var(--accent);
+        font-size: 12px;
+      }
+
+      .chip.error {
+        background: rgba(180, 35, 24, 0.12);
+        color: var(--danger);
+      }
+
+      .feedback {
+        min-height: 20px;
+      }
+
+      @media (max-width: 860px) {
+        .hero,
+        .summary-grid,
+        .counter-grid {
+          grid-template-columns: 1fr;
+          flex-direction: column;
+        }
+
+        .hero-actions {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="panel">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Edge Voice Reader</div>
+            <h1>Run Report</h1>
+            <div class="subtitle">
+              Inspect recent playback flow, runtime state, and bounded diagnostics without storing full text content.
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button id="refreshButton" class="secondary" type="button">Refresh</button>
+            <button id="copyButton" class="primary" type="button">Copy Report</button>
+            <button id="clearButton" class="danger" type="button">Clear Report</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="summary-grid" id="summaryList"></div>
+      </section>
+
+      <section class="panel">
+        <div class="eyebrow">Counters</div>
+        <div class="counter-grid" id="counterGrid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="eyebrow">Recent Events</div>
+        <div class="panel-note">
+          Newest entries appear first. The report stores metadata such as voice, speed, source label, counts, and errors.
+        </div>
+        <div id="eventList" class="event-list"></div>
+        <div id="emptyState" class="empty-state" hidden>No run-report events have been captured yet.</div>
+      </section>
+
+      <div id="feedback" class="feedback"></div>
+    </div>
+    <script src="reader_core.js"></script>
+    <script src="report.js"></script>
+  </body>
+</html>

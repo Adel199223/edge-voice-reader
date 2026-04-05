@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edge Voice Reader</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f6fb;
+        --panel: rgba(255, 255, 255, 0.92);
+        --panel-strong: #ffffff;
+        --ink: #132238;
+        --muted: #5c6d82;
+        --line: rgba(19, 34, 56, 0.12);
+        --accent: #0f6cbd;
+        --accent-strong: #084f8a;
+        --accent-soft: rgba(15, 108, 189, 0.1);
+        --danger: #b42318;
+        --shadow: 0 18px 48px rgba(26, 56, 87, 0.14);
+      }
+
+      body {
+        font-family: "Segoe UI Variable", "Aptos", "Segoe UI", sans-serif;
+        width: 392px;
+        margin: 0;
+        padding: 16px;
+        background:
+          radial-gradient(circle at top left, rgba(15, 108, 189, 0.12), transparent 44%),
+          linear-gradient(180deg, #eef4fb 0%, #f7fafc 100%);
+        color: var(--ink);
+      }
+
+      body[data-surface="fallback"] {
+        width: auto;
+        min-height: 100vh;
+        box-sizing: border-box;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 28px 16px;
+      }
+
+      .shell {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        box-shadow: var(--shadow);
+        padding: 16px;
+        backdrop-filter: blur(12px);
+      }
+
+      body[data-surface="fallback"] .shell {
+        width: min(100%, 640px);
+        padding: 22px;
+      }
+
+      .hero {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .fallback-note {
+        display: none;
+        border-radius: 16px;
+        border: 1px solid rgba(15, 108, 189, 0.16);
+        background: linear-gradient(180deg, #f6fbff 0%, #eef6ff 100%);
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+
+      body[data-surface="fallback"] .fallback-note {
+        display: block;
+      }
+
+      .fallback-title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--accent-strong);
+      }
+
+      .fallback-text {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--ink);
+      }
+
+      .fallback-meta {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      h1 {
+        font-size: 17px;
+        line-height: 1.15;
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .edge-tag {
+        flex-shrink: 0;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      label {
+        display: block;
+        margin: 10px 0 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      textarea,
+      select,
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        background: var(--panel-strong);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 126px;
+        resize: vertical;
+        line-height: 1.45;
+      }
+
+      body[data-surface="fallback"] textarea {
+        min-height: 220px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .actions {
+        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+      }
+
+      button {
+        flex: 1;
+        border: 1px solid transparent;
+        border-radius: 12px;
+        padding: 11px 12px;
+        cursor: pointer;
+        font-weight: 700;
+        font: inherit;
+        transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      }
+
+      button:hover:enabled {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #ffffff;
+        box-shadow: 0 10px 24px rgba(15, 108, 189, 0.26);
+      }
+
+      .secondary {
+        background: var(--panel-strong);
+        color: var(--ink);
+        border-color: var(--line);
+      }
+
+      .danger {
+        background: #fff5f3;
+        color: var(--danger);
+        border-color: rgba(180, 35, 24, 0.18);
+      }
+
+      .status-card {
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+
+      .status-card.error {
+        border-color: rgba(180, 35, 24, 0.2);
+        background: linear-gradient(180deg, #fff8f7 0%, #fff2f0 100%);
+      }
+
+      .status-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .status-card.error .status-label {
+        color: var(--danger);
+      }
+
+      .status-text {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--ink);
+      }
+
+      .status-meta {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .range-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .range-row input[type="range"] {
+        flex: 1;
+        padding: 0;
+        accent-color: var(--accent);
+      }
+
+      .rate-pill {
+        min-width: 58px;
+        text-align: center;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .footer {
+        margin-top: 12px;
+        display: grid;
+        gap: 6px;
+      }
+
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="hero">
+        <div>
+          <h1>Edge Voice Reader</h1>
+          <div id="subtitleText" class="subtitle">
+            Lightweight Microsoft Edge voice reading with saved voice and speed.
+          </div>
+        </div>
+        <div class="edge-tag">Edge Only</div>
+      </div>
+
+      <div id="fallbackNote" class="fallback-note">
+        <div id="fallbackTitle" class="fallback-title">Manual Reader Fallback</div>
+        <div id="fallbackText" class="fallback-text">
+          This page cannot host the in-page reader rail, so the manual reader is open instead.
+        </div>
+        <div id="fallbackMeta" class="fallback-meta"></div>
+      </div>
+
+      <div id="statusCard" class="status-card">
+        <div id="statusLabel" class="status-label">Voice Status</div>
+        <div id="statusText" class="status-text">Checking the saved Edge voice...</div>
+        <div id="statusMeta" class="status-meta"></div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="voice">Voice</label>
+          <select id="voice"></select>
+        </div>
+        <div>
+          <label for="speed">Speed</label>
+          <div class="range-row">
+            <input id="speed" type="range" min="0.7" max="2" step="0.05" />
+            <div id="speedValue" class="rate-pill">1.00x</div>
+          </div>
+        </div>
+      </div>
+
+      <label for="text">Text</label>
+      <textarea
+        id="text"
+        placeholder="Paste text here or use the current page selection."
+      ></textarea>
+
+      <div class="actions">
+        <button id="selectionBtn" class="secondary">Use Selection</button>
+        <button id="probeBtn" class="secondary">Retry Voice Check</button>
+      </div>
+
+      <div class="actions">
+        <button id="speakBtn" class="primary">Speak</button>
+        <button id="stopBtn" class="danger">Stop</button>
+      </div>
+
+      <div class="actions">
+        <button id="reportBtn" class="secondary">Copy Debug Report</button>
+        <button id="clearReportBtn" class="secondary">Clear Debug Report</button>
+      </div>
+
+      <div class="footer">
+        <div class="hint">
+          `Alt+Shift+R` reads the current selection. `Alt+Shift+X` stops playback.
+        </div>
+        <div class="hint">
+          Playback stays in the background, so closing this popup does not interrupt speech.
+        </div>
+        <div class="hint">
+          Copy Debug Report to send the latest structured JSON trace, attempts, and extension errors.
+        </div>
+      </div>
+    </div>
+    <script src="reader_core.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
