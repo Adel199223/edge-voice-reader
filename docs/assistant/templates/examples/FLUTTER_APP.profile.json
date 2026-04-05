@@ -1,0 +1,32 @@
+{
+  "$schema": "./schemas/HARNESS_PROFILE.schema.json",
+  "schema_version": 1,
+  "project": {
+    "name": "sample-reader-app",
+    "description": "cross-platform Flutter reader app"
+  },
+  "operator": {
+    "experience_level": "beginner",
+    "preferred_tone": "plain_english",
+    "needs_safe_commands": true
+  },
+  "stack": {
+    "primary_language": "dart",
+    "framework": "flutter",
+    "surfaces": ["mobile", "web"],
+    "target_os": ["windows", "android", "ios", "web"]
+  },
+  "bootstrap": {
+    "archetype": "flutter_app",
+    "mode": "standard",
+    "enabled_modules": [],
+    "disabled_modules": [],
+    "uses_openai": false,
+    "needs_codespaces": false,
+    "has_browser_bridge": false,
+    "notes": [
+      "Keep Flutter commands copy-paste friendly.",
+      "Prefer one obvious run path per platform."
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "canonical_worktree_path": "/home/fa507/dev/edge-voice-reader",
+  "canonical_branch": "main",
+  "approved_base_branch": "main",
+  "approved_base_head_floor": "3b1249341bf6011c5a7697b041bdd67476256099",
+  "canonical_head_floor": "3b1249341bf6011c5a7697b041bdd67476256099",
+  "build_under_test": {
+    "feature_label": "edge-voice-reader-extension",
+    "product_name": "Edge Voice Reader",
+    "extension_root": "C:\\Users\\FA507\\edge_voice_reader",
+    "extension_version": "0.5.0",
+    "browser_target": "Microsoft Edge on the Windows host",
+    "load_path": "Load unpacked C:\\Users\\FA507\\edge_voice_reader from edge://extensions"
+  },
+  "allow_noncanonical_by_flag": true
+}

@@ -1,4 +1,7 @@
 CodexBackup_*/
+out/
+tooling/__pycache__/
+*.pyc
 *.log
 Thumbs.db
 .DS_Store

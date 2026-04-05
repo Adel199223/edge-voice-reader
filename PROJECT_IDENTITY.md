@@ -8,10 +8,12 @@
 
 ## Canonical source
 
-- Canonical Windows source of truth: `C:\Users\FA507\edge_voice_reader`
-- Load unpacked from this folder only.
+- Public repo: `https://github.com/Adel199223/edge-voice-reader`
+- Canonical WSL clone: `/home/fa507/dev/edge-voice-reader`
+- Live Windows source of truth: `C:\Users\FA507\edge_voice_reader`
+- Load unpacked from the live Windows folder only.
 - Temp snapshots under `C:\Users\FA507\AppData\Local\Temp\edge-voice-reader-smoke\...` are recovery artifacts, not live sources of truth.
-- WSL `edge_local_tts` paths are not live sources while WSL is disabled.
+- The archived `edge_local_tts` repo is legacy continuity only, not the active extension home.
 
 ## Boundary rules
 

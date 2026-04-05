@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "last_updated": "2026-04-05",
+  "canonical": [
+    "README.md",
+    "docs/ROADMAP.md",
+    "docs/ROADMAP_ANCHOR.md",
+    "manifest.json",
+    "docs/assistant/HARNESS_PROFILE.json"
+  ],
+  "bridges": [
+    "AGENTS.md",
+    "agent.md",
+    "docs/assistant/START_HERE.md",
+    "docs/assistant/BROWSER_BRIDGE.md",
+    "docs/assistant/HOST_INTEGRATION.md",
+    "docs/assistant/workflows/SESSION_RESUME.md"
+  ],
+  "workflows": [
+    {
+      "id": "session_resume",
+      "doc": "docs/assistant/workflows/SESSION_RESUME.md",
+      "scope": "Resume the current Edge Voice Reader product path from repo-local continuity files only.",
+      "primary_files": [
+        "README.md",
+        "docs/ROADMAP.md",
+        "docs/ROADMAP_ANCHOR.md",
+        "docs/assistant/workflows/SESSION_RESUME.md",
+        "agent.md",
+        "docs/assistant/START_HERE.md"
+      ],
+      "validation_commands": [
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 -c \"import json, pathlib; json.loads(pathlib.Path(\\\"docs/assistant/manifest.json\\\").read_text()); print(\\\"manifest ok\\\")\"'"
+      ]
+    },
+    {
+      "id": "project_harness_sync",
+      "doc": "docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md",
+      "scope": "Apply or audit the vendored bootstrap harness for this browser-extension repo.",
+      "primary_files": [
+        "docs/assistant/HARNESS_PROFILE.json",
+        "docs/assistant/runtime/BOOTSTRAP_STATE.json",
+        "docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json",
+        "docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json",
+        "docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md"
+      ],
+      "validation_commands": [
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 tooling/check_harness_profile.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json'",
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 tooling/preview_harness_sync.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json --json'",
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 tooling/preview_harness_sync.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json --write-state docs/assistant/runtime/BOOTSTRAP_STATE.json'"
+      ]
+    },
+    {
+      "id": "edge_voice_validation",
+      "doc": "docs/assistant/HOST_INTEGRATION.md",
+      "scope": "Validate the lightweight Edge extension on the real Windows Edge host, including hidden Ava and Andrew voice probing.",
+      "primary_files": [
+        "manifest.json",
+        "background.js",
+        "popup.js",
+        "reader_core.js",
+        "docs/assistant/HOST_INTEGRATION.md"
+      ],
+      "validation_commands": [
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --check background.js'",
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --check popup.js'",
+        "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --test *.test.js'",
+        "powershell -ExecutionPolicy Bypass -File C:\\Users\\FA507\\edge_voice_reader\\tooling\\edge_voice_reader_smoke.ps1 -RepoRoot C:\\Users\\FA507\\edge_voice_reader"
+      ]
+    }
+  ],
+  "global_commands": {
+    "repo_status": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && git status --short --branch'",
+    "harness_profile_check": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 tooling/check_harness_profile.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json'",
+    "harness_preview": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && python3 tooling/preview_harness_sync.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json --write-state docs/assistant/runtime/BOOTSTRAP_STATE.json'",
+    "background_check": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --check background.js'",
+    "popup_check": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --check popup.js'",
+    "reader_tests": "wsl.exe bash -lc 'cd /home/fa507/dev/edge-voice-reader && node --test *.test.js'",
+    "edge_smoke": "powershell -ExecutionPolicy Bypass -File C:\\Users\\FA507\\edge_voice_reader\\tooling\\edge_voice_reader_smoke.ps1 -RepoRoot C:\\Users\\FA507\\edge_voice_reader"
+  },
+  "contracts": {
+    "product_scope": "This repo is a standalone Edge-first extension. Do not reintroduce the localhost daemon path into the active product without an explicit roadmap change.",
+    "voice_scope": "Surface only Ava and Andrew by exact Edge voice name, persist the saved choice, and never auto-fallback to a random voice.",
+    "browser_target": "Treat Microsoft Edge on the Windows host as the live truth source for playback and selection behavior.",
+    "toolchain_home": "Use the WSL clone for repo commands and file edits, but validate browser behavior from the Windows Edge host against the live Windows extension folder.",
+    "background_playback": "Popup playback and read-selection hotkeys must share the same background-owned chrome.tts path.",
+    "direct_probe_policy": "chrome.tts.getVoices() is not sufficient for this repo's voice contract; use direct call probing when validating Ava and Andrew.",
+    "harness_profile_policy": "Treat docs/assistant/HARNESS_PROFILE.json and docs/assistant/runtime/BOOTSTRAP_STATE.json as the repo-local harness inputs and preview output.",
+    "push_policy": "Do not push unless the user explicitly asks."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "generated_at": "REPLACED_BY_TOOL",
+  "bootstrap_version": "2026.03-profile-driven-phase1",
+  "profile_fingerprint": "REPLACED_BY_TOOL",
+  "resolved": {
+    "project": "REPLACED_BY_TOOL",
+    "archetype": "REPLACED_BY_TOOL",
+    "mode": "REPLACED_BY_TOOL",
+    "modules": [],
+    "starter_files": [],
+    "notes": []
+  }
+}

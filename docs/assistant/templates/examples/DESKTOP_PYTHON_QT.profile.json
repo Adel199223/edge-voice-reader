@@ -1,0 +1,32 @@
+{
+  "$schema": "./schemas/HARNESS_PROFILE.schema.json",
+  "schema_version": 1,
+  "project": {
+    "name": "sample-desktop-app",
+    "description": "desktop Python app with GUI and CLI helpers"
+  },
+  "operator": {
+    "experience_level": "beginner",
+    "preferred_tone": "plain_english",
+    "needs_safe_commands": true
+  },
+  "stack": {
+    "primary_language": "python",
+    "framework": "pyqt",
+    "surfaces": ["desktop", "cli"],
+    "target_os": ["windows"]
+  },
+  "bootstrap": {
+    "archetype": "desktop_python_qt",
+    "mode": "standard",
+    "enabled_modules": ["openai_docs_mcp"],
+    "disabled_modules": [],
+    "uses_openai": true,
+    "needs_codespaces": false,
+    "has_browser_bridge": false,
+    "notes": [
+      "Prefer step-by-step setup.",
+      "Keep repair commands explicit and safe."
+    ]
+  }
+}

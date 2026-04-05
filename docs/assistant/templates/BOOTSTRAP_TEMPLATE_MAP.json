@@ -1,0 +1,181 @@
+{
+  "version": 2,
+  "entrypoint": "docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md",
+  "modules": [
+    {
+      "id": "core_contract",
+      "path": "docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md",
+      "required": true,
+      "topics": [
+        "core contracts",
+        "docs architecture",
+        "canonical precedence",
+        "approval gates",
+        "execplans",
+        "worktree isolation",
+        "commit/push shorthand semantics",
+        "cleanup-complete push semantics",
+        "ignored tmp scratch root guidance",
+        "OpenAI docs freshness routing"
+      ]
+    },
+    {
+      "id": "modules_and_triggers",
+      "path": "docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md",
+      "required": true,
+      "topics": [
+        "trigger matrix",
+        "stage-gate support",
+        "reference discovery",
+        "browser automation",
+        "cloud evaluation",
+        "docs sync policy"
+      ]
+    },
+    {
+      "id": "issue_memory_system",
+      "path": "docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md",
+      "required": true,
+      "topics": [
+        "issue memory generation",
+        "operational and wording triggers",
+        "docs sync routing",
+        "bootstrap promotion filtering",
+        "cleanup continuity issue classes"
+      ]
+    },
+    {
+      "id": "project_harness_sync",
+      "path": "docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md",
+      "required": true,
+      "topics": [
+        "vendored template files",
+        "implement the template files trigger",
+        "sync project harness alias",
+        "local harness apply order",
+        "template-edit protection",
+        "continuity and cleanup governance resync"
+      ]
+    },
+    {
+      "id": "local_env_overlay",
+      "path": "docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md",
+      "required": false,
+      "topics": [
+        "local machine profile",
+        "Windows and WSL routing",
+        "host tolerance",
+        "project-local environment overlay generation"
+      ]
+    },
+    {
+      "id": "capability_discovery",
+      "path": "docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md",
+      "required": false,
+      "topics": [
+        "AGENTS skill discovery",
+        "MCP discovery",
+        "local tool inventory",
+        "project-local capability inventory generation"
+      ]
+    },
+    {
+      "id": "worktree_build_identity",
+      "path": "docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md",
+      "required": false,
+      "topics": [
+        "latest approved baseline",
+        "worktree provenance",
+        "canonical runnable build",
+        "build under test identity"
+      ]
+    },
+    {
+      "id": "roadmap_governance",
+      "path": "docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md",
+      "required": false,
+      "topics": [
+        "adaptive roadmap triggering",
+        "roadmap vs execplan-only granularity",
+        "fresh-session resume entrypoint",
+        "active-worktree authority",
+        "detour and closeout update order",
+        "dormant roadmap state on main"
+      ]
+    },
+    {
+      "id": "host_integration_preflight",
+      "path": "docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md",
+      "required": false,
+      "topics": [
+        "host-bound integration preflight",
+        "tool install verification",
+        "auth verification",
+        "same-host validation",
+        "live smoke checks"
+      ]
+    },
+    {
+      "id": "harness_isolation_diagnostics",
+      "path": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md",
+      "required": false,
+      "topics": [
+        "test isolation from live state",
+        "listener ownership checks",
+        "durable session diagnostics",
+        "support packet ordering"
+      ]
+    },
+    {
+      "id": "bootstrap_update_policy",
+      "path": "docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md",
+      "required": false,
+      "topics": [
+        "protected bootstrap maintenance",
+        "update codex bootstrap trigger",
+        "ucbs shorthand alias",
+        "audit codex bootstrap trigger",
+        "check codex bootstrap trigger",
+        "sync codex bootstrap docs trigger",
+        "cleanup continuity promotion rule"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "destination": "docs/assistant/HARNESS_PROFILE.json",
+      "template": "docs/assistant/templates/examples/HARNESS_PROFILE.template.json",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": "docs/assistant/schemas/HARNESS_PROFILE.schema.json",
+      "template": "docs/assistant/schemas/HARNESS_PROFILE.schema.json",
+      "policy": "copy"
+    },
+    {
+      "destination": "docs/assistant/CODEX_ENVIRONMENT.md",
+      "template": "docs/assistant/CODEX_ENVIRONMENT.md",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": ".vscode/mcp.json.example",
+      "template": ".vscode/mcp.json.example",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": "docs/assistant/runtime/BOOTSTRAP_STATE.json",
+      "template": "docs/assistant/templates/examples/BOOTSTRAP_STATE.template.json",
+      "policy": "generated"
+    },
+    {
+      "destination": "docs/assistant/templates/BOOTSTRAP_VERSION.json",
+      "template": "docs/assistant/templates/BOOTSTRAP_VERSION.json",
+      "policy": "copy"
+    },
+    {
+      "destination": "docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json",
+      "template": "docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json",
+      "policy": "copy"
+    }
+  ]
+}

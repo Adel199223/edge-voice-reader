@@ -1,0 +1,41 @@
+{
+  "$schema": "./schemas/HARNESS_PROFILE.schema.json",
+  "schema_version": 1,
+  "project": {
+    "name": "edge-voice-reader",
+    "description": "Standalone Edge-first voice reader extension that uses the hidden Microsoft Ava and Andrew Edge voices, persists voice and speed, and relies on Windows-host validation for live browser playback."
+  },
+  "operator": {
+    "experience_level": "beginner",
+    "preferred_tone": "plain_english",
+    "needs_safe_commands": true
+  },
+  "stack": {
+    "primary_language": "javascript",
+    "framework": "browser_extension",
+    "surfaces": [
+      "browser_extension",
+      "web"
+    ],
+    "target_os": [
+      "windows",
+      "wsl"
+    ]
+  },
+  "bootstrap": {
+    "archetype": "browser_extension",
+    "mode": "standard",
+    "enabled_modules": [
+      "host_integration"
+    ],
+    "disabled_modules": [],
+    "uses_openai": false,
+    "needs_codespaces": false,
+    "has_browser_bridge": true,
+    "notes": [
+      "This repo is a standalone Edge Voice Reader extension rather than a localhost daemon app.",
+      "Daily validation depends on Windows-host Microsoft Edge even when repo editing happens from the WSL clone.",
+      "Keep the product-facing continuity docs in README.md, agent.md, docs/ROADMAP.md, and docs/ROADMAP_ANCHOR.md."
+    ]
+  }
+}

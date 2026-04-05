@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-05T16:52:40.373588Z",
+  "bootstrap_version": "2026.03-profile-driven-phase1",
+  "profile_fingerprint": "bbe8e9643e41",
+  "resolved": {
+    "project": "edge-voice-reader",
+    "archetype": "browser_extension",
+    "mode": "standard",
+    "modules": [
+      "base_docs",
+      "beginner_support",
+      "browser_bridge",
+      "build_identity",
+      "capability_discovery",
+      "diagnostics",
+      "host_integration",
+      "issue_memory",
+      "local_env_overlay",
+      "qa_checks",
+      "release_management",
+      "session_resume"
+    ],
+    "starter_files": [
+      "scripts/dev_extension.ps1",
+      "scripts/package_extension.ps1"
+    ],
+    "notes": [
+      "document permissions and browser-specific packaging early",
+      "This repo is a standalone Edge Voice Reader extension rather than a localhost daemon app.",
+      "Daily validation depends on Windows-host Microsoft Edge even when repo editing happens from the WSL clone.",
+      "Keep the product-facing continuity docs in README.md, agent.md, docs/ROADMAP.md, and docs/ROADMAP_ANCHOR.md."
+    ]
+  }
+}

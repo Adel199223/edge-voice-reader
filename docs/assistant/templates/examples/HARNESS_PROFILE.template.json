@@ -1,0 +1,29 @@
+{
+  "$schema": "./schemas/HARNESS_PROFILE.schema.json",
+  "schema_version": 1,
+  "project": {
+    "name": "your-project-name",
+    "description": "one sentence describing what the project does"
+  },
+  "operator": {
+    "experience_level": "beginner",
+    "preferred_tone": "plain_english",
+    "needs_safe_commands": true
+  },
+  "stack": {
+    "primary_language": "python",
+    "framework": "pyqt",
+    "surfaces": ["desktop", "cli"],
+    "target_os": ["windows"]
+  },
+  "bootstrap": {
+    "archetype": "desktop_python_qt",
+    "mode": "standard",
+    "enabled_modules": [],
+    "disabled_modules": [],
+    "uses_openai": false,
+    "needs_codespaces": false,
+    "has_browser_bridge": false,
+    "notes": []
+  }
+}

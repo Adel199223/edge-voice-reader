@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "version": "2026.03-profile-driven-phase1",
+  "released_at": "2026-03-24",
+  "breaking": false,
+  "features": [
+    "harness_profile",
+    "archetype_registry",
+    "mode_resolution",
+    "preview_before_sync",
+    "bootstrap_state_output",
+    "codex_environment_docs"
+  ],
+  "migration_stage": "additive"
+}

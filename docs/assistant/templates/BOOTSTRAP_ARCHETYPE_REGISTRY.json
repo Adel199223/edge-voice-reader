@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "version": "2026.03-profile-driven-phase1",
+  "modes": {
+    "lite": {
+      "description": "small utilities and experiments with minimal harness weight",
+      "include": [
+        "base_docs",
+        "session_resume",
+        "diagnostics",
+        "build_identity",
+        "qa_checks"
+      ],
+      "exclude": [
+        "roadmap_governance",
+        "release_management",
+        "evaluation"
+      ]
+    },
+    "standard": {
+      "description": "default mode for personal apps with some integrations and active maintenance",
+      "include": [
+        "base_docs",
+        "session_resume",
+        "diagnostics",
+        "build_identity",
+        "qa_checks",
+        "issue_memory",
+        "capability_discovery",
+        "local_env_overlay"
+      ],
+      "exclude": []
+    },
+    "full": {
+      "description": "heavier mode for multi-surface or integration-heavy apps that need governance and release structure",
+      "include": [
+        "base_docs",
+        "session_resume",
+        "diagnostics",
+        "build_identity",
+        "qa_checks",
+        "issue_memory",
+        "capability_discovery",
+        "local_env_overlay",
+        "roadmap_governance",
+        "release_management",
+        "evaluation",
+        "host_integration"
+      ],
+      "exclude": []
+    }
+  },
+  "modules": {
+    "base_docs": {
+      "description": "core human and agent entrypoints",
+      "outputs": [
+        "README.md",
+        "agent.md",
+        "docs/assistant/manifest.json",
+        "docs/assistant/START_HERE.md"
+      ],
+      "aliases": ["core_docs"]
+    },
+    "beginner_support": {
+      "description": "plain-language guides and safe-command surfaces for non-coders",
+      "outputs": [
+        "docs/assistant/SAFE_COMMANDS.md",
+        "docs/assistant/TERMS_IN_PLAIN_ENGLISH.md"
+      ],
+      "aliases": ["newbie_first"]
+    },
+    "session_resume": {
+      "description": "session continuity and quick re-entry workflow",
+      "outputs": [
+        "docs/assistant/workflows/SESSION_RESUME.md"
+      ],
+      "aliases": []
+    },
+    "issue_memory": {
+      "description": "persistent issue memory conventions",
+      "outputs": [
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "aliases": []
+    },
+    "capability_discovery": {
+      "description": "local capability and dependency discovery guidance",
+      "outputs": [
+        "docs/assistant/CAPABILITY_DISCOVERY.md"
+      ],
+      "aliases": []
+    },
+    "diagnostics": {
+      "description": "basic diagnostics and failure triage",
+      "outputs": [
+        "docs/assistant/DIAGNOSTICS.md"
+      ],
+      "aliases": []
+    },
+    "build_identity": {
+      "description": "worktree and canonical build identity",
+      "outputs": [
+        "docs/assistant/runtime/CANONICAL_BUILD.json"
+      ],
+      "aliases": ["worktree_build_identity", "canonical_build"]
+    },
+    "host_integration": {
+      "description": "preflight and host-specific checks",
+      "outputs": [
+        "docs/assistant/HOST_INTEGRATION.md"
+      ],
+      "aliases": ["host_integration_preflight"]
+    },
+    "roadmap_governance": {
+      "description": "adaptive roadmap and long-running planning rules",
+      "outputs": [
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md"
+      ],
+      "aliases": ["roadmap"]
+    },
+    "release_management": {
+      "description": "release and shipping checklists",
+      "outputs": [
+        "docs/assistant/RELEASE_CHECKLIST.md"
+      ],
+      "aliases": []
+    },
+    "codespaces": {
+      "description": "optional cloud dev environment support",
+      "outputs": [
+        ".devcontainer/devcontainer.json"
+      ],
+      "aliases": []
+    },
+    "openai_docs_mcp": {
+      "description": "safe default OpenAI documentation MCP configuration and instructions",
+      "outputs": [
+        ".vscode/mcp.json.example",
+        "docs/assistant/CODEX_ENVIRONMENT.md"
+      ],
+      "aliases": ["openai_docs"]
+    },
+    "browser_bridge": {
+      "description": "browser extension or browser automation coordination guidance",
+      "outputs": [
+        "docs/assistant/BROWSER_BRIDGE.md"
+      ],
+      "aliases": ["browser_integration"]
+    },
+    "local_env_overlay": {
+      "description": "local-only environment notes layered over repo docs",
+      "outputs": [
+        "docs/assistant/LOCAL_ENVIRONMENT.md"
+      ],
+      "aliases": ["local_env"]
+    },
+    "evaluation": {
+      "description": "lightweight eval or regression guidance",
+      "outputs": [
+        "docs/assistant/EVALUATION.md"
+      ],
+      "aliases": []
+    },
+    "qa_checks": {
+      "description": "explicit test and validation surfaces",
+      "outputs": [
+        "docs/assistant/QA_CHECKS.md"
+      ],
+      "aliases": []
+    },
+    "desktop_launcher": {
+      "description": "desktop-runner and repair entrypoints for local GUI apps",
+      "outputs": [
+        "scripts/run_app.ps1",
+        "scripts/repair_env.ps1"
+      ],
+      "aliases": []
+    }
+  },
+  "feature_flag_modules": {
+    "uses_openai": ["openai_docs_mcp"],
+    "needs_codespaces": ["codespaces"],
+    "has_browser_bridge": ["browser_bridge"]
+  },
+  "archetypes": {
+    "desktop_python_qt": {
+      "description": "windows-first or desktop-first Python applications with GUI plus optional CLI support",
+      "default_mode": "standard",
+      "stack": {
+        "primary_language": "python",
+        "framework": "pyqt",
+        "surfaces": ["desktop", "cli"],
+        "target_os": ["windows"]
+      },
+      "include": [
+        "beginner_support",
+        "desktop_launcher",
+        "host_integration"
+      ],
+      "exclude": ["codespaces"],
+      "starter_files": [
+        "scripts/run_app.ps1",
+        "scripts/repair_env.ps1",
+        "scripts/validate.ps1"
+      ],
+      "notes": [
+        "prefer plain-language setup docs",
+        "favor stable local commands over cloud-only assumptions"
+      ]
+    },
+    "flutter_app": {
+      "description": "Flutter mobile, desktop, or web applications with cross-platform concerns",
+      "default_mode": "standard",
+      "stack": {
+        "primary_language": "dart",
+        "framework": "flutter",
+        "surfaces": ["mobile", "desktop", "web"],
+        "target_os": ["windows", "macos", "linux", "android", "ios"]
+      },
+      "include": [
+        "beginner_support"
+      ],
+      "exclude": [],
+      "starter_files": [
+        "scripts/flutter_doctor.ps1",
+        "scripts/run_debug.ps1"
+      ],
+      "notes": [
+        "prefer explicit platform notes",
+        "keep commands copy-paste friendly"
+      ]
+    },
+    "web_app": {
+      "description": "browser-based applications and dashboards",
+      "default_mode": "standard",
+      "stack": {
+        "primary_language": "typescript",
+        "framework": "web",
+        "surfaces": ["web"],
+        "target_os": ["cross_platform"]
+      },
+      "include": [
+        "release_management"
+      ],
+      "exclude": [],
+      "starter_files": [
+        "scripts/dev.ps1",
+        "scripts/build.ps1",
+        "scripts/test.ps1"
+      ],
+      "notes": [
+        "codespaces can be useful here if the profile enables it"
+      ]
+    },
+    "cli_tool": {
+      "description": "single-purpose command-line tools and automations",
+      "default_mode": "lite",
+      "stack": {
+        "primary_language": "python",
+        "framework": "cli",
+        "surfaces": ["cli"],
+        "target_os": ["cross_platform"]
+      },
+      "include": [],
+      "exclude": ["roadmap_governance", "release_management"],
+      "starter_files": [
+        "scripts/run.ps1",
+        "scripts/test.ps1"
+      ],
+      "notes": [
+        "keep the harness lightweight unless integrations justify more"
+      ]
+    },
+    "api_service": {
+      "description": "backend services, APIs, and integration-heavy workers",
+      "default_mode": "full",
+      "stack": {
+        "primary_language": "python",
+        "framework": "api",
+        "surfaces": ["api"],
+        "target_os": ["linux", "cross_platform"]
+      },
+      "include": [
+        "release_management",
+        "host_integration"
+      ],
+      "exclude": [],
+      "starter_files": [
+        "scripts/run_service.ps1",
+        "scripts/test_api.ps1"
+      ],
+      "notes": [
+        "prefer explicit environment and deployment docs"
+      ]
+    },
+    "browser_extension": {
+      "description": "browser extensions or apps with browser-side integration surfaces",
+      "default_mode": "standard",
+      "stack": {
+        "primary_language": "typescript",
+        "framework": "browser_extension",
+        "surfaces": ["web", "browser_extension"],
+        "target_os": ["cross_platform"]
+      },
+      "include": [
+        "browser_bridge",
+        "release_management"
+      ],
+      "exclude": [],
+      "starter_files": [
+        "scripts/dev_extension.ps1",
+        "scripts/package_extension.ps1"
+      ],
+      "notes": [
+        "document permissions and browser-specific packaging early"
+      ]
+    }
+  }
+}
