@@ -41,6 +41,7 @@
 - On April 1, 2026, page-reader reliability was hardened for ChatGPT Arabic content: queue cursor resets no longer replay finished paragraphs, unordered bullets no longer speak a marker label, and consecutive Arabic list items use a list-aware auto-advance/start-time path.
 - On April 5, 2026, list targeting was tightened for ChatGPT and article-like pages: short `li` items now remain readable blocks, idle starts on any bullet begin from the first item of that nearest list, and active list-item clicks jump to the exact clicked item without replaying earlier bullets after rescans.
 - On April 26, 2026, long ChatGPT paragraph starts were hardened: very long single Latin page-reader chunks can pre-split into startup clauses, pre-start failures are finalized in the debug report, and attempts now track startup/recovery chunking plus first-word timing without storing raw sentence text.
+- On April 26, 2026, page-reader and manual replacement starts gained a 150 ms Edge TTS stop-settle barrier before the next `chrome.tts.speak()` call. This protects Ava/Andrew Natural playback from native restart races after sentence jumps, retries, recovery chunking, and voice probes; debug attempts now record the settle reason/duration and sanitized speak options without raw sentence text.
 - Keep repo-local Git `core.filemode=false` in Windows/WSL checkouts so archived files do not reappear as mode-only dirtiness.
 
 ## Immediate Next Focus

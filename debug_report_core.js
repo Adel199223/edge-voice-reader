@@ -1,7 +1,7 @@
 "use strict";
 
 (function initEdgeVoiceReaderDebugCore(globalScope) {
-  const REPORT_SCHEMA_VERSION = 4;
+  const REPORT_SCHEMA_VERSION = 5;
   const REPORT_MAX_EVENTS = 80;
   const REPORT_MAX_ATTEMPTS = 20;
   const REPORT_MAX_EXTENSION_ERRORS = 20;
@@ -27,6 +27,12 @@
   function sanitizeRoundedRate(rawValue) {
     return Number.isFinite(Number(rawValue))
       ? Math.max(0.1, Math.round(Number(rawValue) * 100) / 100)
+      : 0;
+  }
+
+  function sanitizeRoundedNumber(rawValue, minimum = 0) {
+    return Number.isFinite(Number(rawValue))
+      ? Math.max(minimum, Math.round(Number(rawValue) * 100) / 100)
       : 0;
   }
 
@@ -154,6 +160,45 @@
       : [];
   }
 
+  function sanitizeStringList(rawValues, maxItems = 12, maxLength = 40) {
+    return Array.isArray(rawValues)
+      ? rawValues
+          .map((value) => sanitizeString(value, maxLength))
+          .filter(Boolean)
+          .slice(0, maxItems)
+      : [];
+  }
+
+  function sanitizeSpeakOptions(rawOptions) {
+    const options = rawOptions && typeof rawOptions === "object" ? rawOptions : {};
+    const sanitized = {};
+    const voiceName = sanitizeString(options.voiceName, 160);
+    const rate = sanitizeRoundedRate(options.rate);
+    const lang = sanitizeLangHint(options.lang);
+    const requiredEventTypes = sanitizeStringList(options.requiredEventTypes, 12, 40);
+
+    if (voiceName) {
+      sanitized.voiceName = voiceName;
+    }
+    if (rate) {
+      sanitized.rate = rate;
+    }
+    if (lang) {
+      sanitized.lang = lang;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, "enqueue")) {
+      sanitized.enqueue = options.enqueue === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, "volume")) {
+      sanitized.volume = sanitizeRoundedNumber(options.volume, 0);
+    }
+    if (requiredEventTypes.length) {
+      sanitized.requiredEventTypes = requiredEventTypes;
+    }
+
+    return sanitized;
+  }
+
   function sanitizeTraceEvent(rawEvent) {
     const event = rawEvent && typeof rawEvent === "object" ? rawEvent : {};
     return {
@@ -207,6 +252,9 @@
       newlineCount: sanitizeInteger(event.newlineCount, 0),
       configuredStartTimeoutMs: sanitizeInteger(event.configuredStartTimeoutMs, 0),
       retryCount: sanitizeInteger(event.retryCount, 0),
+      stopSettleMs: sanitizeInteger(event.stopSettleMs, 0),
+      stopSettleReason: sanitizeString(event.stopSettleReason, 80),
+      speakOptions: sanitizeSpeakOptions(event.speakOptions),
       startLatencyMs: sanitizeInteger(event.startLatencyMs, 0),
       firstWordLatencyMs: sanitizeInteger(event.firstWordLatencyMs, 0),
       firstWordBoundaryGapMs: sanitizeInteger(event.firstWordBoundaryGapMs, 0),
@@ -267,6 +315,9 @@
       gapFromPreviousSentenceEndMs: sanitizeInteger(attempt.gapFromPreviousSentenceEndMs, 0),
       configuredStartTimeoutMs: sanitizeInteger(attempt.configuredStartTimeoutMs, 0),
       retryCount: sanitizeInteger(attempt.retryCount, 0),
+      stopSettleMs: sanitizeInteger(attempt.stopSettleMs, 0),
+      stopSettleReason: sanitizeString(attempt.stopSettleReason, 80),
+      speakOptions: sanitizeSpeakOptions(attempt.speakOptions),
       status: sanitizeString(attempt.status, 40),
       failureCode: sanitizeString(attempt.failureCode, 80),
       message: sanitizeString(attempt.message, 260),
@@ -561,6 +612,7 @@
     sanitizeRunReport,
     sanitizeRunReportAttempt,
     sanitizeRunReportEvent,
+    sanitizeSpeakOptions,
     shouldResetRunReportForPageSessionStart,
     shouldStopPlaybackForRunReportReset,
   };

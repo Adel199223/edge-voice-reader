@@ -177,6 +177,77 @@ function wait(ms) {
   });
 }
 
+function stopTtsNow() {
+  try {
+    chrome.tts.stop();
+  } catch (_error) {
+    // Stop is best-effort; the next speak attempt still owns its own errors.
+  }
+}
+
+function normalizeStopSettleReason(rawValue) {
+  return String(rawValue || "tts_restart").trim().slice(0, 80) || "tts_restart";
+}
+
+function beginTtsStopSettle(reason, settleMs = START_RETRY_DELAY_MS) {
+  const stopSettleMs = Math.max(0, Math.trunc(Number(settleMs || 0)));
+  const stopSettleReason = normalizeStopSettleReason(reason);
+  stopTtsNow();
+  return {
+    stopSettleMs,
+    stopSettleReason,
+    waitPromise: stopSettleMs ? wait(stopSettleMs) : Promise.resolve(),
+  };
+}
+
+async function waitForTtsStopSettle(stopSettle) {
+  if (!stopSettle || !stopSettle.waitPromise) {
+    return null;
+  }
+  await stopSettle.waitPromise;
+  return stopSettle;
+}
+
+function hasActivePlaybackForRestart() {
+  return Boolean(
+    activePlaybackAttempt ||
+      activePageReaderSession ||
+      runtimeState.isSpeaking ||
+      runtimeState.isPaused
+  );
+}
+
+function applyStopSettleMeta(target, stopSettle) {
+  if (!target || !stopSettle) {
+    return;
+  }
+  target.stopSettleMs = Math.max(0, Math.trunc(Number(stopSettle.stopSettleMs || 0)));
+  target.stopSettleReason = normalizeStopSettleReason(stopSettle.stopSettleReason);
+}
+
+function buildTtsSpeakOptions(input = {}) {
+  const requiredEventTypes = Array.isArray(input.requiredEventTypes)
+    ? input.requiredEventTypes.map((type) => String(type || "").trim()).filter(Boolean)
+    : [];
+  const rate = Number.isFinite(Number(input.rate))
+    ? Math.round(Number(input.rate) * 100) / 100
+    : 1;
+  const options = {
+    voiceName: String(input.voiceName || ""),
+    rate,
+    enqueue: input.enqueue === true,
+    requiredEventTypes,
+  };
+  const lang = normalizeLangHint(input.lang);
+  if (lang) {
+    options.lang = lang;
+  }
+  if (Number.isFinite(Number(input.volume))) {
+    options.volume = Math.round(Number(input.volume) * 100) / 100;
+  }
+  return options;
+}
+
 function buildStackHead(rawStack) {
   return String(rawStack || "")
     .split(/\r?\n+/)
@@ -572,7 +643,7 @@ async function handlePageSessionStarted(sender = {}, message = {}) {
       );
     }
     activePageReaderSession = null;
-    chrome.tts.stop();
+    stopTtsNow();
     clearRuntimeState("stopped");
   }
 
@@ -863,7 +934,10 @@ async function extractSelectionFromActiveTab() {
   return extracted;
 }
 
-function probeVoice(voice) {
+async function probeVoice(voice) {
+  const stopSettle = beginTtsStopSettle("voice_probe");
+  await waitForTtsStopSettle(stopSettle);
+
   return new Promise((resolve) => {
     let settled = false;
 
@@ -873,11 +947,7 @@ function probeVoice(voice) {
       }
       settled = true;
       clearTimeout(timeoutId);
-      try {
-        chrome.tts.stop();
-      } catch (_error) {
-        // The probe already has its answer.
-      }
+      stopTtsNow();
       resolve({
         status: result.status,
         checkedAt: Date.now(),
@@ -893,15 +963,17 @@ function probeVoice(voice) {
     }, 1800);
 
     try {
-      chrome.tts.stop();
+      const speakOptions = buildTtsSpeakOptions({
+        voiceName: voice.voiceName,
+        volume: 0,
+        rate: 1,
+        enqueue: false,
+        requiredEventTypes: ["start", "error"],
+      });
       chrome.tts.speak(
         "Voice probe",
         {
-          voiceName: voice.voiceName,
-          volume: 0,
-          rate: 1,
-          enqueue: false,
-          requiredEventTypes: ["start", "error"],
+          ...speakOptions,
           onEvent(event) {
             if (event.type === "start") {
               finish({ status: "available" });
@@ -1208,6 +1280,14 @@ function buildPlaybackAttempt(input = {}) {
     gapFromPreviousSentenceEndMs: Number(input.gapFromPreviousSentenceEndMs || 0),
     configuredStartTimeoutMs: Number(input.configuredStartTimeoutMs || 0),
     retryCount: Number(input.retryCount || 0),
+    stopSettleMs: Math.max(0, Math.trunc(Number(input.stopSettleMs || 0))),
+    stopSettleReason: input.stopSettleReason
+      ? normalizeStopSettleReason(input.stopSettleReason)
+      : "",
+    speakOptions:
+      input.speakOptions && typeof input.speakOptions === "object"
+        ? { ...input.speakOptions }
+        : {},
     status: "starting",
     failureCode: "",
     message: "",
@@ -1309,6 +1389,9 @@ function buildAttemptEventMeta(attempt) {
     newlineCount: attempt.newlineCount,
     configuredStartTimeoutMs: attempt.configuredStartTimeoutMs,
     retryCount: attempt.retryCount,
+    stopSettleMs: attempt.stopSettleMs,
+    stopSettleReason: attempt.stopSettleReason,
+    speakOptions: attempt.speakOptions,
     startLatencyMs: attempt.startLatencyMs,
     firstWordLatencyMs: attempt.firstWordLatencyMs,
     firstWordBoundaryGapMs: attempt.firstWordBoundaryGapMs,
@@ -1408,7 +1491,7 @@ function runChunkedTtsAttempt(config = {}) {
     session: config.session || null,
   });
 
-  function speakChunkAt(chunkIndex, retryCount = 0) {
+  function speakChunkAt(chunkIndex, retryCount = 0, stopSettle = null) {
     if (!isCurrentRequest() || attempt.__finalized || playbackSettled) {
       return;
     }
@@ -1432,6 +1515,9 @@ function runChunkedTtsAttempt(config = {}) {
     }
 
     attempt.retryCount = Math.max(Number(attempt.retryCount || 0), retryCount);
+    if (stopSettle) {
+      applyStopSettleMeta(attempt, stopSettle);
+    }
     const configuredStartTimeoutMs = resolveStartTimeoutMs({
       textLength: Number(config.contextTextLength || attempt.textLength || 0),
       sentenceLength: String(chunk.text || "").length,
@@ -1447,6 +1533,23 @@ function runChunkedTtsAttempt(config = {}) {
     );
     const invocationId = activeInvocationId + 1;
     activeInvocationId = invocationId;
+    const requiredEventTypes = [
+      "start",
+      "end",
+      "error",
+      "interrupted",
+      "cancelled",
+      "pause",
+      "resume",
+    ];
+    const speakOptions = buildTtsSpeakOptions({
+      voiceName: config.selectedVoiceName,
+      rate: config.speechRate,
+      lang: chunk.langHint,
+      enqueue: false,
+      requiredEventTypes,
+    });
+    attempt.speakOptions = speakOptions;
 
     function isStaleInvocation() {
       return invocationId !== activeInvocationId;
@@ -1501,6 +1604,8 @@ function runChunkedTtsAttempt(config = {}) {
             }
           );
           const nextChunk = activeChunks[chunkIndex] || chunk;
+          const recoveryStopSettle = beginTtsStopSettle("chunk_recovery");
+          applyStopSettleMeta(attempt, recoveryStopSettle);
           config.onChunkEvent?.(
             "chunk_recovery",
             buildChunkEventMeta(attempt, nextChunk, chunkIndex, configuredStartTimeoutMs, {
@@ -1513,8 +1618,7 @@ function runChunkedTtsAttempt(config = {}) {
               recoveryStrategy: attempt.recoveryStrategy,
             })
           );
-          chrome.tts.stop();
-          await wait(START_RETRY_DELAY_MS);
+          await waitForTtsStopSettle(recoveryStopSettle);
           if (suppressedStopInvocationId === invocationId) {
             suppressedStopInvocationId = 0;
           }
@@ -1524,7 +1628,7 @@ function runChunkedTtsAttempt(config = {}) {
             !attempt.__finalized &&
             !isStaleInvocation()
           ) {
-            speakChunkAt(chunkIndex, 0);
+            speakChunkAt(chunkIndex, 0, recoveryStopSettle);
           }
           return;
         }
@@ -1532,6 +1636,14 @@ function runChunkedTtsAttempt(config = {}) {
         const message = willRetry
           ? `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${activeChunks.length} within ${configuredStartTimeoutMs} ms. Retrying once.`
           : `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${activeChunks.length} within ${configuredStartTimeoutMs} ms.`;
+        let retryStopSettle = null;
+        if (willRetry) {
+          suppressedStopInvocationId = invocationId;
+          retryStopSettle = beginTtsStopSettle("chunk_retry");
+          applyStopSettleMeta(attempt, retryStopSettle);
+        } else {
+          stopTtsNow();
+        }
         config.onChunkEvent?.(
           willRetry ? "chunk_retry" : "chunk_timeout",
           buildChunkEventMeta(attempt, chunk, chunkIndex, configuredStartTimeoutMs, {
@@ -1541,11 +1653,7 @@ function runChunkedTtsAttempt(config = {}) {
           })
         );
         if (willRetry) {
-          suppressedStopInvocationId = invocationId;
-        }
-        chrome.tts.stop();
-        if (willRetry) {
-          await wait(START_RETRY_DELAY_MS);
+          await waitForTtsStopSettle(retryStopSettle);
           if (suppressedStopInvocationId === invocationId) {
             suppressedStopInvocationId = 0;
           }
@@ -1555,7 +1663,7 @@ function runChunkedTtsAttempt(config = {}) {
             !attempt.__finalized &&
             !isStaleInvocation()
           ) {
-            speakChunkAt(chunkIndex, retryCount + 1);
+            speakChunkAt(chunkIndex, retryCount + 1, retryStopSettle);
           }
           return;
         }
@@ -1578,22 +1686,13 @@ function runChunkedTtsAttempt(config = {}) {
       })();
     }, configuredStartTimeoutMs);
 
+    if (!attempt.startAt) {
+      attempt.speakInvokedAt = Date.now();
+    }
     chrome.tts.speak(
       chunk.text,
       {
-        voiceName: config.selectedVoiceName,
-        rate: config.speechRate,
-        lang: chunk.langHint || undefined,
-        enqueue: false,
-        requiredEventTypes: [
-          "start",
-          "end",
-          "error",
-          "interrupted",
-          "cancelled",
-          "pause",
-          "resume",
-        ],
+        ...speakOptions,
         onEvent(event) {
           if (
             !isCurrentRequest() ||
@@ -1768,7 +1867,7 @@ function runChunkedTtsAttempt(config = {}) {
     );
   }
 
-  speakChunkAt(0, 0);
+  speakChunkAt(0, 0, config.initialStopSettle || null);
 }
 
 async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
@@ -1778,6 +1877,7 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
   }
 
   const { state, selectedVoice } = await ensureSelectedVoiceReady();
+  const shouldSettleAfterStop = hasActivePlaybackForRestart();
   activeRequestId += 1;
   const requestId = activeRequestId;
   const pageReaderSession = buildPageReaderSession(rawSession, sourceLabel, text);
@@ -1788,6 +1888,9 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
 
   pageReaderSession.requestId = requestId;
 
+  const initialStopSettle = shouldSettleAfterStop
+    ? beginTtsStopSettle("page_reader_supersede")
+    : null;
   await interruptPriorPageReader(pageReaderSession);
   activePageReaderSession = pageReaderSession;
 
@@ -1807,10 +1910,14 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
     buildPageReaderRunReportMeta(pageReaderSession, {
       requestId,
       sourceLabel: sourceLabel || "page paragraph",
+      ...(initialStopSettle
+        ? {
+            stopSettleMs: initialStopSettle.stopSettleMs,
+            stopSettleReason: initialStopSettle.stopSettleReason,
+          }
+        : {}),
     })
   );
-
-  chrome.tts.stop();
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -1952,6 +2059,13 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
         gapFromPreviousSentenceEndMs: pageReaderSession.lastSentenceEndAt
           ? Math.max(0, speakInvokedAt - pageReaderSession.lastSentenceEndAt)
           : 0,
+        ...(sentenceIndex === Number(pageReaderSession.initialSentenceIndex || 0) &&
+        initialStopSettle
+          ? {
+              stopSettleMs: initialStopSettle.stopSettleMs,
+              stopSettleReason: initialStopSettle.stopSettleReason,
+            }
+          : {}),
       });
       pageReaderSession.chunkCount = chunks.length;
       pageReaderSession.chunkPlan = chunkPlan;
@@ -1966,6 +2080,10 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
         isCurrentRequest: isCurrentSession,
         selectedVoiceName: selectedVoice.voiceName,
         speechRate: state.speechRate,
+        initialStopSettle:
+          sentenceIndex === Number(pageReaderSession.initialSentenceIndex || 0)
+            ? initialStopSettle
+            : null,
         onAttemptReady(entry) {
           registerActivePlaybackAttempt(entry);
         },
@@ -2157,7 +2275,14 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
       });
     }
 
-    speakSentenceAt(Math.max(0, pageReaderSession.sentenceIndex));
+    void (async () => {
+      await waitForTtsStopSettle(initialStopSettle);
+      if (!isCurrentSession()) {
+        settleStartSuccess();
+        return;
+      }
+      speakSentenceAt(Math.max(0, pageReaderSession.sentenceIndex));
+    })();
   });
 }
 
@@ -2232,6 +2357,7 @@ async function speakText(rawText, sourceLabel, options = {}) {
   }
 
   const { state, selectedVoice } = await ensureSelectedVoiceReady();
+  const shouldSettleAfterStop = hasActivePlaybackForRestart();
   activeRequestId += 1;
   const requestId = activeRequestId;
   const normalizedSourceLabel = sourceLabel || "popup text";
@@ -2263,6 +2389,9 @@ async function speakText(rawText, sourceLabel, options = {}) {
     pageReaderSession.chunkPlan = chunkPlan;
   }
 
+  const initialStopSettle = shouldSettleAfterStop
+    ? beginTtsStopSettle("manual_supersede")
+    : null;
   await interruptPriorPageReader(pageReaderSession);
   activePageReaderSession = pageReaderSession;
 
@@ -2295,10 +2424,14 @@ async function speakText(rawText, sourceLabel, options = {}) {
       containsArabic: textProfile.containsArabic,
       containsLatin: textProfile.containsLatin,
       newlineCount: textProfile.newlineCount,
+      ...(initialStopSettle
+        ? {
+            stopSettleMs: initialStopSettle.stopSettleMs,
+            stopSettleReason: initialStopSettle.stopSettleReason,
+          }
+        : {}),
     })
   );
-
-  chrome.tts.stop();
 
   return new Promise((resolve, reject) => {
     let startSettled = false;
@@ -2405,29 +2538,68 @@ async function speakText(rawText, sourceLabel, options = {}) {
       requestedAt,
       speakInvokedAt,
       gapFromPreviousSentenceEndMs: 0,
+      ...(initialStopSettle
+        ? {
+            stopSettleMs: initialStopSettle.stopSettleMs,
+            stopSettleReason: initialStopSettle.stopSettleReason,
+          }
+        : {}),
     });
 
-    runChunkedTtsAttempt({
-      attempt,
-      session: pageReaderSession,
-      chunks,
-      contextTextLength: text.length,
-      isCurrentRequest,
-      selectedVoiceName: selectedVoice.voiceName,
-      speechRate: state.speechRate,
-      onLiveAttempt(entry) {
-        registerActivePlaybackAttempt(entry);
-      },
-      onChunkEvent(eventType, eventMeta) {
-        void appendRunReportEvent(
-          "manual_" + eventType,
-          buildManualAttemptMeta(attempt, eventMeta)
-        );
-      },
-      onChunkStart(chunk, chunkIndex, configuredStartTimeoutMs, retryCount, hadStarted) {
-        if (hadStarted) {
+    void (async () => {
+      await waitForTtsStopSettle(initialStopSettle);
+      if (!isCurrentRequest()) {
+        settleStartSuccess();
+        return;
+      }
+      runChunkedTtsAttempt({
+        attempt,
+        session: pageReaderSession,
+        chunks,
+        contextTextLength: text.length,
+        isCurrentRequest,
+        selectedVoiceName: selectedVoice.voiceName,
+        speechRate: state.speechRate,
+        initialStopSettle,
+        onLiveAttempt(entry) {
+          registerActivePlaybackAttempt(entry);
+        },
+        onChunkEvent(eventType, eventMeta) {
           void appendRunReportEvent(
-            "manual_chunk_started",
+            "manual_" + eventType,
+            buildManualAttemptMeta(attempt, eventMeta)
+          );
+        },
+        onChunkStart(chunk, chunkIndex, configuredStartTimeoutMs, retryCount, hadStarted) {
+          if (hadStarted) {
+            void appendRunReportEvent(
+              "manual_chunk_started",
+              buildManualAttemptMeta(
+                attempt,
+                buildChunkEventMeta(
+                  attempt,
+                  chunk,
+                  chunkIndex,
+                  configuredStartTimeoutMs,
+                  { retryCount }
+                )
+              )
+            );
+          }
+        },
+        onFirstChunkStart(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
+          setRuntimeState({
+            isSpeaking: true,
+            isPaused: false,
+            lastEvent: "start",
+            lastError: "",
+            lastFailureCode: "",
+            lastAttemptId: attempt.attemptId,
+            sourceLabel: normalizedSourceLabel,
+            textLength: text.length,
+          });
+          void appendRunReportEvent(
+            "manual_read_started",
             buildManualAttemptMeta(
               attempt,
               buildChunkEventMeta(
@@ -2439,127 +2611,102 @@ async function speakText(rawText, sourceLabel, options = {}) {
               )
             )
           );
-        }
-      },
-      onFirstChunkStart(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
-        setRuntimeState({
-          isSpeaking: true,
-          isPaused: false,
-          lastEvent: "start",
-          lastError: "",
-          lastFailureCode: "",
-          lastAttemptId: attempt.attemptId,
-          sourceLabel: normalizedSourceLabel,
-          textLength: text.length,
-        });
-        void appendRunReportEvent(
-          "manual_read_started",
-          buildManualAttemptMeta(
-            attempt,
-            buildChunkEventMeta(
-              attempt,
-              chunk,
-              chunkIndex,
-              configuredStartTimeoutMs,
-              { retryCount }
-            )
-          )
-        );
-        if (pageReaderSession) {
-          void sendPageReaderEvent(pageReaderSession, "start");
-        }
-        settleStartSuccess();
-      },
-      onPause(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
-        setRuntimeState({
-          isSpeaking: false,
-          isPaused: true,
-          lastEvent: "paused",
-          lastError: "",
-          lastFailureCode: "",
-          lastAttemptId: attempt.attemptId,
-          sourceLabel: normalizedSourceLabel,
-          textLength: text.length,
-        });
-        void appendRunReportEvent(
-          "paused",
-          buildManualAttemptMeta(
-            attempt,
-            buildChunkEventMeta(
-              attempt,
-              chunk,
-              chunkIndex,
-              configuredStartTimeoutMs,
-              { retryCount }
-            )
-          )
-        );
-        if (pageReaderSession) {
-          void sendPageReaderEvent(pageReaderSession, "paused");
-        }
-      },
-      onResume(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
-        setRuntimeState({
-          isSpeaking: true,
-          isPaused: false,
-          lastEvent: "resumed",
-          lastError: "",
-          lastFailureCode: "",
-          lastAttemptId: attempt.attemptId,
-          sourceLabel: normalizedSourceLabel,
-          textLength: text.length,
-        });
-        void appendRunReportEvent(
-          "resumed",
-          buildManualAttemptMeta(
-            attempt,
-            buildChunkEventMeta(
-              attempt,
-              chunk,
-              chunkIndex,
-              configuredStartTimeoutMs,
-              { retryCount }
-            )
-          )
-        );
-        if (pageReaderSession) {
-          void sendPageReaderEvent(pageReaderSession, "resumed");
-        }
-      },
-      onFailure(finalAttempt, message, failureCode) {
-        emitFailure(finalAttempt, message, failureCode);
-      },
-      onInterrupted(finalAttempt, eventType, message) {
-        clearOwnedPageReaderSession();
-        if (pageReaderSession) {
-          void sendPageReaderEvent(pageReaderSession, eventType);
-        }
-        clearRuntimeState(eventType);
-        void appendRunReportEvent(
-          eventType === "cancelled" ? "manual_read_cancelled" : "manual_read_interrupted",
-          buildManualAttemptMeta(finalAttempt || attempt, {
-            message,
-          })
-        );
-        if (!startSettled) {
+          if (pageReaderSession) {
+            void sendPageReaderEvent(pageReaderSession, "start");
+          }
           settleStartSuccess();
-        }
-      },
-      onComplete(finalAttempt) {
-        clearOwnedPageReaderSession();
-        if (pageReaderSession) {
-          void sendPageReaderEvent(pageReaderSession, "end");
-        }
-        clearRuntimeState("end");
-        void appendRunReportEvent(
-          "manual_read_finished",
-          buildManualAttemptMeta(finalAttempt || attempt)
-        );
-        if (!startSettled) {
-          settleStartSuccess();
-        }
-      },
-    });
+        },
+        onPause(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
+          setRuntimeState({
+            isSpeaking: false,
+            isPaused: true,
+            lastEvent: "paused",
+            lastError: "",
+            lastFailureCode: "",
+            lastAttemptId: attempt.attemptId,
+            sourceLabel: normalizedSourceLabel,
+            textLength: text.length,
+          });
+          void appendRunReportEvent(
+            "paused",
+            buildManualAttemptMeta(
+              attempt,
+              buildChunkEventMeta(
+                attempt,
+                chunk,
+                chunkIndex,
+                configuredStartTimeoutMs,
+                { retryCount }
+              )
+            )
+          );
+          if (pageReaderSession) {
+            void sendPageReaderEvent(pageReaderSession, "paused");
+          }
+        },
+        onResume(chunk, chunkIndex, configuredStartTimeoutMs, retryCount) {
+          setRuntimeState({
+            isSpeaking: true,
+            isPaused: false,
+            lastEvent: "resumed",
+            lastError: "",
+            lastFailureCode: "",
+            lastAttemptId: attempt.attemptId,
+            sourceLabel: normalizedSourceLabel,
+            textLength: text.length,
+          });
+          void appendRunReportEvent(
+            "resumed",
+            buildManualAttemptMeta(
+              attempt,
+              buildChunkEventMeta(
+                attempt,
+                chunk,
+                chunkIndex,
+                configuredStartTimeoutMs,
+                { retryCount }
+              )
+            )
+          );
+          if (pageReaderSession) {
+            void sendPageReaderEvent(pageReaderSession, "resumed");
+          }
+        },
+        onFailure(finalAttempt, message, failureCode) {
+          emitFailure(finalAttempt, message, failureCode);
+        },
+        onInterrupted(finalAttempt, eventType, message) {
+          clearOwnedPageReaderSession();
+          if (pageReaderSession) {
+            void sendPageReaderEvent(pageReaderSession, eventType);
+          }
+          clearRuntimeState(eventType);
+          void appendRunReportEvent(
+            eventType === "cancelled" ? "manual_read_cancelled" : "manual_read_interrupted",
+            buildManualAttemptMeta(finalAttempt || attempt, {
+              message,
+            })
+          );
+          if (!startSettled) {
+            settleStartSuccess();
+          }
+        },
+        onComplete(finalAttempt) {
+          clearOwnedPageReaderSession();
+          if (pageReaderSession) {
+            void sendPageReaderEvent(pageReaderSession, "end");
+          }
+          clearRuntimeState("end");
+          void appendRunReportEvent(
+            "manual_read_finished",
+            buildManualAttemptMeta(finalAttempt || attempt)
+          );
+          if (!startSettled) {
+            settleStartSuccess();
+          }
+        },
+      });
+    })();
   });
 }
 
@@ -2623,7 +2770,7 @@ async function stopSpeaking(options = {}) {
   }
   clearActivePlaybackAttempt();
   activePageReaderSession = null;
-  chrome.tts.stop();
+  stopTtsNow();
   clearRuntimeState(options.lastEvent || "stopped");
   void appendRunReportEvent("stopped", runReportMeta);
   if (pageReaderSession && options.notifyPageReader !== false) {

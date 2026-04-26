@@ -22,7 +22,7 @@ const {
   shouldStopPlaybackForRunReportReset,
 } = require("./debug_report_core.js");
 
-test("buildDefaultRunReport creates the v3 debug schema", () => {
+test("buildDefaultRunReport creates the current debug schema", () => {
   const report = buildDefaultRunReport();
   assert.equal(report.schemaVersion, REPORT_SCHEMA_VERSION);
   assert.equal(report.counters.recoveredStarts, 0);
@@ -53,6 +53,16 @@ test("sanitizeRunReport keeps bounded structured buffers and strips unknown fiel
           { index: 1, langHint: "en-US", textLength: 8, reason: "latin_phrase" },
           { index: 0, langHint: "ar", textLength: 20, reason: "base" },
         ],
+        stopSettleMs: 150,
+        stopSettleReason: "page_reader_supersede",
+        speakOptions: {
+          voiceName: "Microsoft AvaMultilingual Online (Natural) - English (United States)",
+          rate: 1.45,
+          lang: "en-US",
+          enqueue: false,
+          requiredEventTypes: ["start", "end", "error"],
+          text: "should not survive",
+        },
         primaryScript: "arabic",
         runtimeLastError: "boom",
         sentenceText: "should not survive",
@@ -78,6 +88,16 @@ test("sanitizeRunReport keeps bounded structured buffers and strips unknown fiel
           { index: 0, langHint: "ar", textLength: 12, reason: "base" },
           { index: 1, langHint: "en-US", textLength: 10, reason: "url" },
         ],
+        stopSettleMs: 150,
+        stopSettleReason: "chunk_retry",
+        speakOptions: {
+          voiceName: "Microsoft AvaMultilingual Online (Natural) - English (United States)",
+          rate: 1.45,
+          lang: "en-US",
+          enqueue: false,
+          requiredEventTypes: ["start", "end"],
+          rawText: "should not survive",
+        },
         sentenceText: "should not survive",
       },
     ],
@@ -106,10 +126,22 @@ test("sanitizeRunReport keeps bounded structured buffers and strips unknown fiel
     { index: 1, langHint: "en-US", textLength: 8, reason: "latin_phrase" },
   ]);
   assert.equal(report.attempts[0].runtimeLastError, "boom");
+  assert.equal(report.attempts[0].stopSettleMs, 150);
+  assert.equal(report.attempts[0].stopSettleReason, "page_reader_supersede");
+  assert.deepEqual(report.attempts[0].speakOptions, {
+    voiceName: "Microsoft AvaMultilingual Online (Natural) - English (United States)",
+    rate: 1.45,
+    lang: "en-US",
+    enqueue: false,
+    requiredEventTypes: ["start", "end", "error"],
+  });
+  assert.equal("text" in report.attempts[0].speakOptions, false);
   assert.equal("sentenceText" in report.attempts[0], false);
   assert.equal(report.events[0].failureCode, "start_timeout");
   assert.equal(report.events[0].listKind, "unordered");
   assert.equal(report.events[0].chunkCount, 2);
+  assert.equal(report.events[0].stopSettleReason, "chunk_retry");
+  assert.equal("rawText" in report.events[0].speakOptions, false);
   assert.equal("sentenceText" in report.events[0], false);
   assert.equal(report.extensionErrors[0].surface, "popup");
   assert.equal("extra" in report.extensionErrors[0], false);
