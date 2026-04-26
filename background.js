@@ -16,6 +16,8 @@ const {
 const { normalizeSentenceStartIndex, segmentTextIntoSentences } = EdgeVoiceReaderPageCore;
 const {
   buildChunkPlan,
+  buildRecoveryChunks,
+  buildStartupChunks,
   buildSpeechChunks,
   normalizeLangHint,
 } = EdgeVoiceReaderSpeechPrepCore;
@@ -23,6 +25,7 @@ const {
   REPORT_SCHEMA_VERSION,
   START_RETRY_DELAY_MS,
   analyzeTextProfile,
+  buildRunReportInsights,
   buildDefaultRunReport,
   pickRunReportCounter,
   resolveStartTimeoutMs,
@@ -30,6 +33,8 @@ const {
   sanitizeRunReport,
   sanitizeRunReportAttempt,
   sanitizeRunReportEvent,
+  shouldResetRunReportForPageSessionStart,
+  shouldStopPlaybackForRunReportReset,
 } = EdgeVoiceReaderDebugCore;
 
 const MANUAL_READER_PAGE = "popup.html";
@@ -45,6 +50,7 @@ let cachedState = null;
 let probePromise = null;
 let activeRequestId = 0;
 let activePageReaderSession = null;
+let activePlaybackAttempt = null;
 let runtimeState = {
   isSpeaking: false,
   isPaused: false,
@@ -104,6 +110,55 @@ function buildSpeechChunkSet(text, options = {}) {
     langSegments: options.langSegments || options.langRanges,
     spokenPrefix: options.spokenPrefix,
     sentenceStart: options.sentenceStart,
+  });
+  const enableStartupChunking = options.enableStartupChunking === true;
+  if (
+    enableStartupChunking &&
+    chunks.length === 1 &&
+    String(chunks[0]?.reason || "context") === "context" &&
+    Math.max(
+      0,
+      Math.trunc(Number(chunks[0]?.textLength || String(chunks[0]?.text || "").length || 0))
+    ) >= 260
+  ) {
+    const startupChunkSet = buildStartupChunkSet(String(chunks[0]?.text || ""), {
+      documentLang: options.documentLang,
+      langHint: chunks[0]?.langHint || options.langHint,
+    });
+    if (startupChunkSet.chunks.length > 1) {
+      return {
+        ...startupChunkSet,
+        usedStartupChunks: true,
+        startupStrategy: "clause",
+      };
+    }
+  }
+
+  const chunkPlan = sanitizeChunkPlan(buildChunkPlan(chunks));
+  return {
+    chunks,
+    chunkPlan,
+    usedStartupChunks: false,
+    startupStrategy: "",
+  };
+}
+
+function buildRecoveryChunkSet(text, options = {}) {
+  const chunks = buildRecoveryChunks(text, {
+    documentLang: options.documentLang,
+    langHint: options.langHint,
+  });
+  const chunkPlan = sanitizeChunkPlan(buildChunkPlan(chunks));
+  return {
+    chunks,
+    chunkPlan,
+  };
+}
+
+function buildStartupChunkSet(text, options = {}) {
+  const chunks = buildStartupChunks(text, {
+    documentLang: options.documentLang,
+    langHint: options.langHint,
   });
   const chunkPlan = sanitizeChunkPlan(buildChunkPlan(chunks));
   return {
@@ -236,6 +291,173 @@ function buildActiveRunReportMeta(extra = {}) {
     : buildManualRunReportMeta(runtimeState.sourceLabel, runtimeState.textLength, extra);
 }
 
+function registerActivePlaybackAttempt(entry = {}) {
+  const attempt = entry && entry.attempt ? entry.attempt : null;
+  if (!attempt || attempt.__finalized) {
+    return;
+  }
+
+  activePlaybackAttempt = {
+    attempt,
+    requestId: Number(entry.requestId || attempt.requestId || 0),
+    surface: String(entry.surface || attempt.surface || "manual"),
+    tabId: Number(entry.tabId || attempt.tabId || 0),
+    blockId: String(entry.blockId || attempt.blockId || ""),
+    session: entry.session || null,
+    closeAttempt:
+      entry && typeof entry.closeAttempt === "function"
+        ? entry.closeAttempt
+        : null,
+  };
+}
+
+function clearActivePlaybackAttempt(attemptId = "") {
+  if (!activePlaybackAttempt) {
+    return false;
+  }
+
+  if (
+    attemptId &&
+    String(activePlaybackAttempt.attempt?.attemptId || "") !== String(attemptId)
+  ) {
+    return false;
+  }
+
+  activePlaybackAttempt = null;
+  return true;
+}
+
+function buildActivePlaybackRunReportMeta(extra = {}) {
+  const tracked =
+    activePlaybackAttempt &&
+    activePlaybackAttempt.attempt &&
+    !activePlaybackAttempt.attempt.__finalized
+      ? activePlaybackAttempt
+      : null;
+  if (!tracked) {
+    return buildActiveRunReportMeta(extra);
+  }
+
+  const attempt = tracked.attempt;
+  const attemptMeta = {
+    ...buildAttemptEventMeta(attempt),
+    requestId: Number(tracked.requestId || attempt.requestId || 0),
+    ...extra,
+  };
+
+  if (tracked.surface === "page_reader" && tracked.session) {
+    return buildPageReaderRunReportMeta(tracked.session, attemptMeta);
+  }
+
+  return buildManualRunReportMeta(
+    attempt.sourceLabel || runtimeState.sourceLabel,
+    attempt.textLength || runtimeState.textLength,
+    attemptMeta
+  );
+}
+
+function getTrackedPlaybackAttemptForPageReaderSession(session) {
+  const tracked =
+    activePlaybackAttempt &&
+    activePlaybackAttempt.attempt &&
+    !activePlaybackAttempt.attempt.__finalized
+      ? activePlaybackAttempt
+      : null;
+  if (!tracked || tracked.surface !== "page_reader" || !tracked.session || !session) {
+    return null;
+  }
+
+  if (!isSamePageReaderSession(tracked.session, session)) {
+    return null;
+  }
+
+  const trackedRequestId = Number(
+    tracked.requestId || tracked.attempt?.requestId || 0
+  );
+  const sessionRequestId = Number(session.requestId || 0);
+  return trackedRequestId && trackedRequestId === sessionRequestId ? tracked : null;
+}
+
+function buildPageReaderTerminalPatch(attempt, options = {}) {
+  const cause = String(options.cause || "interrupted").trim().toLowerCase();
+  const beforeStart = !Number(attempt?.startAt || 0);
+
+  if (cause === "superseded") {
+    return {
+      eventType: "page_reader_superseded",
+      status: beforeStart ? "error" : "superseded",
+      failureCode: beforeStart ? "superseded_before_start" : "",
+      message:
+        options.message ||
+        (beforeStart
+          ? "Playback was superseded by a newer page-reader request before Edge finished starting."
+          : "Playback was superseded by a newer page-reader request."),
+      settledByEvent: "superseded",
+      runtimeLastError: "",
+    };
+  }
+
+  if (cause === "stopped") {
+    return {
+      eventType: "page_reader_stopped",
+      status: beforeStart ? "error" : "stopped",
+      failureCode: beforeStart ? "stopped_before_start" : "",
+      message:
+        options.message ||
+        (beforeStart
+          ? "Playback was stopped before Edge finished starting."
+          : "Playback was stopped."),
+      settledByEvent: "stopped",
+      runtimeLastError: "",
+    };
+  }
+
+  return {
+    eventType: "page_reader_interrupted",
+    status: beforeStart ? "error" : "interrupted",
+    failureCode: beforeStart ? "interrupted_before_start" : "",
+    message:
+      options.message ||
+      (beforeStart
+        ? "Playback was interrupted before Edge finished starting."
+        : "Playback was interrupted."),
+    settledByEvent: "interrupted",
+    runtimeLastError: "",
+  };
+}
+
+async function finalizeTrackedPageReaderAttempt(session, options = {}) {
+  const tracked = getTrackedPlaybackAttemptForPageReaderSession(session);
+  if (!tracked || typeof tracked.closeAttempt !== "function") {
+    return null;
+  }
+
+  const terminalPatch = buildPageReaderTerminalPatch(tracked.attempt, options);
+  const finalAttempt = await tracked.closeAttempt({
+    status: terminalPatch.status,
+    failureCode: terminalPatch.failureCode,
+    message: terminalPatch.message,
+    settledByEvent: terminalPatch.settledByEvent,
+    runtimeLastError: terminalPatch.runtimeLastError,
+  });
+  if (!finalAttempt) {
+    return null;
+  }
+
+  if (options.recordEvent !== false) {
+    await appendRunReportEvent(
+      terminalPatch.eventType,
+      buildPageReaderRunReportMeta(session, {
+        ...buildAttemptEventMeta(finalAttempt),
+        requestId: Number(finalAttempt.requestId || session.requestId || 0),
+        message: terminalPatch.message,
+      })
+    );
+  }
+
+  return finalAttempt;
+}
+
 async function appendRunReportEvent(type, meta = {}) {
   const state = await getStoredState();
   return queueRunReportMutation((current) => {
@@ -302,12 +524,71 @@ async function clearRunReport() {
   return next;
 }
 
+async function handlePageSessionStarted(sender = {}, message = {}) {
+  const senderTab = sender && sender.tab ? sender.tab : null;
+  const senderTabId = Number(senderTab && senderTab.id ? senderTab.id : 0);
+  const [activeTab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  const shouldReset = shouldResetRunReportForPageSessionStart({
+    senderTabId,
+    senderTabUrl: senderTab && senderTab.url ? senderTab.url : "",
+    senderUrl: sender && sender.url ? sender.url : "",
+    messageUrl: message && message.url ? message.url : "",
+    activeTabId: activeTab && activeTab.id ? activeTab.id : 0,
+    activeTabUrl: activeTab && activeTab.url ? activeTab.url : "",
+    frameId: sender && typeof sender.frameId === "number" ? sender.frameId : 0,
+  });
+
+  if (!shouldReset) {
+    return {
+      ok: true,
+      reset: false,
+    };
+  }
+
+  const shouldStopPlayback = shouldStopPlaybackForRunReportReset({
+    senderTabId,
+    activeSessionTabId:
+      activePageReaderSession && activePageReaderSession.tabId
+        ? activePageReaderSession.tabId
+        : 0,
+    activeSessionMode:
+      activePageReaderSession && activePageReaderSession.mode
+        ? activePageReaderSession.mode
+        : "",
+  });
+
+  if (shouldStopPlayback) {
+    activeRequestId += 1;
+    if (
+      activePlaybackAttempt &&
+      activePlaybackAttempt.surface === "page_reader" &&
+      Number(activePlaybackAttempt.tabId || 0) === senderTabId
+    ) {
+      clearActivePlaybackAttempt(
+        activePlaybackAttempt.attempt?.attemptId || ""
+      );
+    }
+    activePageReaderSession = null;
+    chrome.tts.stop();
+    clearRuntimeState("stopped");
+  }
+
+  clearTransientRuntimeFeedback();
+  await clearRunReport();
+
+  return {
+    ok: true,
+    reset: true,
+  };
+}
+
 function buildDebugSummary(report, state) {
   const selectedVoice = getVoiceByKey(state.preferredVoiceKey);
-  const latestAttempt = Array.isArray(report.attempts) ? report.attempts[0] || null : null;
-  const latestFailure = Array.isArray(report.attempts)
-    ? report.attempts.find((attempt) => attempt.failureCode) || null
-    : null;
+  const insights = buildRunReportInsights(report);
+  const latestAttempt = insights.latestAttempt;
   const latestExtensionError = Array.isArray(report.extensionErrors)
     ? report.extensionErrors[0] || null
     : null;
@@ -325,8 +606,12 @@ function buildDebugSummary(report, state) {
     selectedVoiceName: selectedVoice.voiceName,
     speechRate: state.speechRate,
     lastAttemptId: latestAttempt ? latestAttempt.attemptId : "",
-    lastFailureCode: latestFailure ? latestFailure.failureCode : "",
-    lastFailureMessage: latestFailure ? latestFailure.message : "",
+    lastFailureCode: insights.lastFailureCode,
+    lastFailureMessage: insights.lastFailureMessage,
+    startLatencySampleCount: insights.startLatencySampleCount,
+    startLatencyMedianMs: insights.startLatencyMedianMs,
+    startLatencyP95Ms: insights.startLatencyP95Ms,
+    startLatencyMaxMs: insights.startLatencyMaxMs,
     lastExtensionErrorMessage: latestExtensionError ? latestExtensionError.message : "",
   };
 }
@@ -852,12 +1137,19 @@ async function interruptPriorPageReader(nextSession = null) {
     return;
   }
 
-  if (isSamePageReaderSession(activePageReaderSession, nextSession)) {
+  const previous = activePageReaderSession;
+  const sameSession = isSamePageReaderSession(previous, nextSession);
+  const sameRequest =
+    sameSession &&
+    Number(previous.requestId || 0) === Number(nextSession?.requestId || 0);
+  if (sameRequest) {
     return;
   }
 
-  const previous = activePageReaderSession;
   activePageReaderSession = null;
+  await finalizeTrackedPageReaderAttempt(previous, {
+    cause: nextSession ? "superseded" : "interrupted",
+  });
   await sendPageReaderEvent(previous, "interrupted", {
     ...buildPageReaderSentenceMeta(previous),
   });
@@ -896,6 +1188,10 @@ function buildPlaybackAttempt(input = {}) {
       ? Math.max(0, Math.trunc(Number(input.chunkCount)))
       : 0,
     chunkPlan: sanitizeChunkPlan(input.chunkPlan),
+    usedStartupChunks: input.usedStartupChunks === true,
+    startupStrategy: String(input.startupStrategy || "").trim().slice(0, 40),
+    usedRecoveryChunks: input.usedRecoveryChunks === true,
+    recoveryStrategy: String(input.recoveryStrategy || "").trim().slice(0, 40),
     primaryScript: String(textProfile.primaryScript || "unknown"),
     isRtl: textProfile.isRtl === true,
     containsArabic: textProfile.containsArabic === true,
@@ -907,6 +1203,8 @@ function buildPlaybackAttempt(input = {}) {
     endAt: 0,
     lastEventAt: 0,
     startLatencyMs: 0,
+    firstWordLatencyMs: Number(input.firstWordLatencyMs || 0),
+    firstWordBoundaryGapMs: Number(input.firstWordBoundaryGapMs || 0),
     gapFromPreviousSentenceEndMs: Number(input.gapFromPreviousSentenceEndMs || 0),
     configuredStartTimeoutMs: Number(input.configuredStartTimeoutMs || 0),
     retryCount: Number(input.retryCount || 0),
@@ -919,20 +1217,50 @@ function buildPlaybackAttempt(input = {}) {
   };
 }
 
+function syncAttemptFirstWordMetrics(attempt) {
+  if (!attempt) {
+    return;
+  }
+
+  const firstWordEventAt = Number(attempt.__firstWordEventAt || 0);
+  if (firstWordEventAt > 0 && !attempt.firstWordLatencyMs) {
+    attempt.firstWordLatencyMs = Math.max(
+      0,
+      firstWordEventAt - Number(attempt.speakInvokedAt || firstWordEventAt)
+    );
+  }
+  if (firstWordEventAt > 0 && Number(attempt.startAt || 0) > 0) {
+    attempt.firstWordBoundaryGapMs = Math.max(
+      0,
+      firstWordEventAt - Number(attempt.startAt || firstWordEventAt)
+    );
+  }
+}
+
 function recordAttemptTtsEvent(attempt, event, at = Date.now()) {
   if (!attempt || attempt.__finalized) {
     return;
   }
 
   attempt.lastEventAt = at;
+  const charIndex = Number.isFinite(Number(event?.charIndex))
+    ? Math.trunc(Number(event.charIndex))
+    : -1;
+  const length = Number.isFinite(Number(event?.length))
+    ? Math.max(0, Math.trunc(Number(event.length)))
+    : 0;
   attempt.ttsEvents.push({
     type: String(event?.type || "unknown"),
     at,
     offsetMs: Math.max(0, at - Number(attempt.speakInvokedAt || at)),
-    charIndex: Number.isFinite(Number(event?.charIndex)) ? Math.trunc(Number(event.charIndex)) : -1,
-    length: Number.isFinite(Number(event?.length)) ? Math.max(0, Math.trunc(Number(event.length))) : 0,
+    charIndex,
+    length,
     errorMessage: typeof event?.errorMessage === "string" ? event.errorMessage.trim() : "",
   });
+  if (charIndex >= 0 && Number(attempt.__firstWordEventAt || 0) <= 0) {
+    attempt.__firstWordEventAt = at;
+    syncAttemptFirstWordMetrics(attempt);
+  }
 }
 
 function finalizePlaybackAttempt(attempt, patch = {}) {
@@ -941,6 +1269,7 @@ function finalizePlaybackAttempt(attempt, patch = {}) {
   );
   const startAt = Number(patch.startAt || attempt.startAt || 0);
   const speakInvokedAt = Number(attempt.speakInvokedAt || attempt.requestedAt || 0);
+  syncAttemptFirstWordMetrics(attempt);
   attempt.__finalized = true;
   return {
     ...attempt,
@@ -969,6 +1298,10 @@ function buildAttemptEventMeta(attempt) {
     listMarkerText: attempt.listMarkerText,
     chunkCount: attempt.chunkCount,
     chunkPlan: sanitizeChunkPlan(attempt.chunkPlan),
+    usedStartupChunks: attempt.usedStartupChunks === true,
+    startupStrategy: String(attempt.startupStrategy || "").trim().slice(0, 40),
+    usedRecoveryChunks: attempt.usedRecoveryChunks === true,
+    recoveryStrategy: String(attempt.recoveryStrategy || "").trim().slice(0, 40),
     primaryScript: attempt.primaryScript,
     isRtl: attempt.isRtl,
     containsArabic: attempt.containsArabic,
@@ -977,6 +1310,8 @@ function buildAttemptEventMeta(attempt) {
     configuredStartTimeoutMs: attempt.configuredStartTimeoutMs,
     retryCount: attempt.retryCount,
     startLatencyMs: attempt.startLatencyMs,
+    firstWordLatencyMs: attempt.firstWordLatencyMs,
+    firstWordBoundaryGapMs: attempt.firstWordBoundaryGapMs,
     gapFromPreviousSentenceEndMs: attempt.gapFromPreviousSentenceEndMs,
     failureCode: attempt.failureCode,
     message: attempt.message,
@@ -1007,8 +1342,8 @@ function buildChunkEventMeta(attempt, chunk, chunkIndex, configuredStartTimeoutM
 
 function runChunkedTtsAttempt(config = {}) {
   const attempt = config.attempt;
-  const chunks = Array.isArray(config.chunks) ? config.chunks : [];
-  if (!attempt || !chunks.length || typeof config.isCurrentRequest !== "function") {
+  let activeChunks = Array.isArray(config.chunks) ? config.chunks.slice() : [];
+  if (!attempt || !activeChunks.length || typeof config.isCurrentRequest !== "function") {
     return;
   }
 
@@ -1035,15 +1370,50 @@ function runChunkedTtsAttempt(config = {}) {
     }
     const finalAttempt = finalizePlaybackAttempt(attempt, patch);
     await appendRunReportAttempt(finalAttempt);
+    clearActivePlaybackAttempt(finalAttempt.attemptId);
     return finalAttempt;
   }
+
+  function syncAttemptChunkState(nextChunks, extra = {}) {
+    activeChunks = Array.isArray(nextChunks) ? nextChunks.slice() : [];
+    attempt.chunkCount = activeChunks.length;
+    attempt.chunkPlan = sanitizeChunkPlan(buildChunkPlan(activeChunks));
+    if (extra.usedStartupChunks === true) {
+      attempt.usedStartupChunks = true;
+    }
+    if (extra.startupStrategy) {
+      attempt.startupStrategy = String(extra.startupStrategy).trim().slice(0, 40);
+    }
+    if (extra.usedRecoveryChunks === true) {
+      attempt.usedRecoveryChunks = true;
+    }
+    if (extra.recoveryStrategy) {
+      attempt.recoveryStrategy = String(extra.recoveryStrategy).trim().slice(0, 40);
+    }
+    if (config.session && attempt.surface === "page_reader") {
+      config.session.chunkCount = attempt.chunkCount;
+      config.session.chunkPlan = attempt.chunkPlan;
+    }
+    config.onChunkPlanChanged?.(activeChunks, attempt.chunkPlan, extra);
+  }
+
+  syncAttemptChunkState(activeChunks);
+  config.onAttemptReady?.({
+    attempt,
+    closeAttempt,
+    requestId: attempt.requestId,
+    surface: attempt.surface,
+    tabId: attempt.tabId,
+    blockId: attempt.blockId,
+    session: config.session || null,
+  });
 
   function speakChunkAt(chunkIndex, retryCount = 0) {
     if (!isCurrentRequest() || attempt.__finalized || playbackSettled) {
       return;
     }
 
-    const chunk = chunks[chunkIndex];
+    const chunk = activeChunks[chunkIndex];
     if (!chunk) {
       void (async () => {
         const finalAttempt = await closeAttempt({
@@ -1065,6 +1435,8 @@ function runChunkedTtsAttempt(config = {}) {
     const configuredStartTimeoutMs = resolveStartTimeoutMs({
       textLength: Number(config.contextTextLength || attempt.textLength || 0),
       sentenceLength: String(chunk.text || "").length,
+      chunkCount: activeChunks.length,
+      chunkReason: String(chunk.reason || "context"),
       textProfile: chunk.profile,
       listKind: config.listKind || attempt.listKind,
       transitionSource: config.transitionSource || "",
@@ -1092,9 +1464,74 @@ function runChunkedTtsAttempt(config = {}) {
 
       void (async () => {
         const willRetry = retryCount < 1;
+        const recovery =
+          willRetry &&
+          !hasStarted &&
+          !attempt.usedRecoveryChunks &&
+          typeof config.buildRecoveryChunks === "function"
+            ? config.buildRecoveryChunks({
+                attempt,
+                chunk,
+                chunkIndex,
+                retryCount,
+                configuredStartTimeoutMs,
+                chunks: activeChunks.slice(),
+              })
+            : null;
+        const canRecover =
+          recovery &&
+          Array.isArray(recovery.chunks) &&
+          recovery.chunks.length > 1;
+        if (canRecover) {
+          const recoveryMessage =
+            recovery.message ||
+            `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${activeChunks.length} within ${configuredStartTimeoutMs} ms. Switching to ${recovery.chunks.length} clause-sized recovery chunks.`;
+          attempt.retryCount = Math.max(
+            Number(attempt.retryCount || 0),
+            retryCount + 1
+          );
+          suppressedStopInvocationId = invocationId;
+          syncAttemptChunkState(
+            activeChunks
+              .slice(0, chunkIndex)
+              .concat(recovery.chunks, activeChunks.slice(chunkIndex + 1)),
+            {
+              usedRecoveryChunks: true,
+              recoveryStrategy: recovery.strategy || "clause",
+            }
+          );
+          const nextChunk = activeChunks[chunkIndex] || chunk;
+          config.onChunkEvent?.(
+            "chunk_recovery",
+            buildChunkEventMeta(attempt, nextChunk, chunkIndex, configuredStartTimeoutMs, {
+              retryCount: retryCount + 1,
+              message: recoveryMessage,
+              note:
+                recovery.note ||
+                `Switched to ${recovery.chunks.length} clause-sized recovery chunks.`,
+              usedRecoveryChunks: true,
+              recoveryStrategy: attempt.recoveryStrategy,
+            })
+          );
+          chrome.tts.stop();
+          await wait(START_RETRY_DELAY_MS);
+          if (suppressedStopInvocationId === invocationId) {
+            suppressedStopInvocationId = 0;
+          }
+          if (
+            isCurrentRequest() &&
+            !playbackSettled &&
+            !attempt.__finalized &&
+            !isStaleInvocation()
+          ) {
+            speakChunkAt(chunkIndex, 0);
+          }
+          return;
+        }
+
         const message = willRetry
-          ? `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${chunks.length} within ${configuredStartTimeoutMs} ms. Retrying once.`
-          : `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${chunks.length} within ${configuredStartTimeoutMs} ms.`;
+          ? `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${activeChunks.length} within ${configuredStartTimeoutMs} ms. Retrying once.`
+          : `${attempt.selectedVoiceLabel} did not start chunk ${chunkIndex + 1} of ${activeChunks.length} within ${configuredStartTimeoutMs} ms.`;
         config.onChunkEvent?.(
           willRetry ? "chunk_retry" : "chunk_timeout",
           buildChunkEventMeta(attempt, chunk, chunkIndex, configuredStartTimeoutMs, {
@@ -1177,6 +1614,7 @@ function runChunkedTtsAttempt(config = {}) {
                 0,
                 attempt.startAt - attempt.speakInvokedAt
               );
+              syncAttemptFirstWordMetrics(attempt);
             }
             config.onChunkStart?.(
               chunk,
@@ -1187,6 +1625,15 @@ function runChunkedTtsAttempt(config = {}) {
             );
             if (!hasStarted) {
               hasStarted = true;
+              config.onLiveAttempt?.({
+                attempt,
+                closeAttempt,
+                requestId: attempt.requestId,
+                surface: attempt.surface,
+                tabId: attempt.tabId,
+                blockId: attempt.blockId,
+                session: config.session || null,
+              });
               config.onFirstChunkStart?.(
                 chunk,
                 chunkIndex,
@@ -1458,9 +1905,16 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
         sentenceIndex === Number(pageReaderSession.initialSentenceIndex || 0)
           ? pageReaderSession.transitionSource
           : "";
-      const { chunks, chunkPlan } = buildSpeechChunkSet(sentenceText, {
+      const {
+        chunks,
+        chunkPlan,
+        usedStartupChunks,
+        startupStrategy,
+      } = buildSpeechChunkSet(sentenceText, {
         documentLang: pageReaderSession.documentLang || pageReaderSession.langHint,
         langHint: pageReaderSession.langHint,
+        enableStartupChunking:
+          sentenceIndex === Number(pageReaderSession.initialSentenceIndex || 0),
         langSegments: sentence.langRanges,
         spokenPrefix: sentenceIndex === 0 ? pageReaderSession.spokenPrefix : "",
         sentenceStart: sentence.start,
@@ -1490,6 +1944,8 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
         listMarkerText: pageReaderSession.listMarkerText,
         chunkCount: chunks.length,
         chunkPlan,
+        usedStartupChunks,
+        startupStrategy,
         textProfile,
         requestedAt: pageReaderSession.requestedAt,
         speakInvokedAt,
@@ -1502,6 +1958,7 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
 
       runChunkedTtsAttempt({
         attempt,
+        session: pageReaderSession,
         chunks,
         contextTextLength: sentenceText.length,
         listKind: pageReaderSession.listKind,
@@ -1509,6 +1966,36 @@ async function speakPageReaderBlock(rawText, sourceLabel, rawSession = {}) {
         isCurrentRequest: isCurrentSession,
         selectedVoiceName: selectedVoice.voiceName,
         speechRate: state.speechRate,
+        onAttemptReady(entry) {
+          registerActivePlaybackAttempt(entry);
+        },
+        onLiveAttempt(entry) {
+          registerActivePlaybackAttempt(entry);
+        },
+        buildRecoveryChunks({ chunk, chunkIndex, retryCount, chunks: currentChunks }) {
+          const chunkReason = String(chunk?.reason || "context");
+          if (
+            retryCount > 0 ||
+            chunkIndex !== 0 ||
+            (currentChunks.length !== 1 && chunkReason !== "startup_clause") ||
+            (chunkReason !== "context" && chunkReason !== "startup_clause")
+          ) {
+            return null;
+          }
+
+          const recovery = buildRecoveryChunkSet(String(chunk?.text || ""), {
+            documentLang: pageReaderSession.documentLang || pageReaderSession.langHint,
+            langHint: chunk?.langHint || pageReaderSession.langHint,
+          });
+          if (recovery.chunks.length <= 1) {
+            return null;
+          }
+
+          return {
+            ...recovery,
+            strategy: "clause",
+          };
+        },
         onChunkEvent(eventType, eventMeta) {
           void appendRunReportEvent(
             `page_reader_${eventType}`,
@@ -1922,11 +2409,15 @@ async function speakText(rawText, sourceLabel, options = {}) {
 
     runChunkedTtsAttempt({
       attempt,
+      session: pageReaderSession,
       chunks,
       contextTextLength: text.length,
       isCurrentRequest,
       selectedVoiceName: selectedVoice.voiceName,
       speechRate: state.speechRate,
+      onLiveAttempt(entry) {
+        registerActivePlaybackAttempt(entry);
+      },
       onChunkEvent(eventType, eventMeta) {
         void appendRunReportEvent(
           "manual_" + eventType,
@@ -2085,7 +2576,7 @@ async function pauseSpeaking() {
     lastEvent: "paused",
     lastError: "",
   });
-  void appendRunReportEvent("paused", buildActiveRunReportMeta());
+  void appendRunReportEvent("paused", buildActivePlaybackRunReportMeta());
   if (activePageReaderSession) {
     await sendPageReaderEvent(activePageReaderSession, "paused", {
       ...buildPageReaderSentenceMeta(activePageReaderSession),
@@ -2103,7 +2594,7 @@ async function resumeSpeaking() {
     lastEvent: "resumed",
     lastError: "",
   });
-  void appendRunReportEvent("resumed", buildActiveRunReportMeta());
+  void appendRunReportEvent("resumed", buildActivePlaybackRunReportMeta());
   if (activePageReaderSession) {
     await sendPageReaderEvent(activePageReaderSession, "resumed", {
       ...buildPageReaderSentenceMeta(activePageReaderSession),
@@ -2116,9 +2607,21 @@ async function resumeSpeaking() {
 async function stopSpeaking(options = {}) {
   activeRequestId += 1;
   const pageReaderSession = activePageReaderSession;
-  const runReportMeta = pageReaderSession
-    ? buildPageReaderRunReportMeta(pageReaderSession)
-    : buildManualRunReportMeta(runtimeState.sourceLabel, runtimeState.textLength);
+  let runReportMeta = buildActivePlaybackRunReportMeta();
+  if (pageReaderSession) {
+    const finalAttempt = await finalizeTrackedPageReaderAttempt(pageReaderSession, {
+      cause: "stopped",
+      recordEvent: false,
+      message: options.message || "",
+    });
+    if (finalAttempt) {
+      runReportMeta = buildPageReaderRunReportMeta(pageReaderSession, {
+        ...buildAttemptEventMeta(finalAttempt),
+        requestId: Number(finalAttempt.requestId || pageReaderSession.requestId || 0),
+      });
+    }
+  }
+  clearActivePlaybackAttempt();
   activePageReaderSession = null;
   chrome.tts.stop();
   clearRuntimeState(options.lastEvent || "stopped");
@@ -2210,6 +2713,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void (async () => {
     try {
       const type = message && typeof message.type === "string" ? message.type : "";
+
+      if (type === "page_session_started") {
+        const response = await handlePageSessionStarted(sender, message || {});
+        sendResponse(response);
+        return;
+      }
 
       if (type === "get_status") {
         const status = await runVoiceProbe(false);

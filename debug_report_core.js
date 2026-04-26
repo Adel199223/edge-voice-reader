@@ -1,13 +1,15 @@
 "use strict";
 
 (function initEdgeVoiceReaderDebugCore(globalScope) {
-  const REPORT_SCHEMA_VERSION = 2;
+  const REPORT_SCHEMA_VERSION = 4;
   const REPORT_MAX_EVENTS = 80;
   const REPORT_MAX_ATTEMPTS = 20;
   const REPORT_MAX_EXTENSION_ERRORS = 20;
   const REPORT_MAX_CHUNK_PLAN = 8;
   const START_TIMEOUT_DEFAULT_MS = 2500;
+  const START_TIMEOUT_STARTUP_CLAUSE_MS = 3000;
   const START_TIMEOUT_LONG_MS = 3500;
+  const START_TIMEOUT_VERY_LONG_CONTEXT_MS = 5000;
   const START_TIMEOUT_RTL_MS = 4500;
   const START_TIMEOUT_AUTO_ADVANCE_RTL_LIST_MS = 9000;
   const START_RETRY_DELAY_MS = 150;
@@ -91,6 +93,8 @@
   function resolveStartTimeoutMs(input = {}) {
     const sentenceLength = sanitizeInteger(input.sentenceLength, 0);
     const textLength = sanitizeInteger(input.textLength, 0);
+    const chunkCount = sanitizeInteger(input.chunkCount, 0);
+    const chunkReason = sanitizeString(input.chunkReason, 80).toLowerCase();
     const listKind = sanitizeListKind(input.listKind);
     const transitionSource = sanitizeString(input.transitionSource, 24).toLowerCase();
     const textProfile = input.textProfile && typeof input.textProfile === "object"
@@ -107,6 +111,21 @@
 
     if (textProfile.isRtl || textProfile.containsArabic) {
       return START_TIMEOUT_RTL_MS;
+    }
+
+    if (chunkReason === "startup_clause") {
+      return START_TIMEOUT_STARTUP_CLAUSE_MS;
+    }
+
+    if (
+      chunkCount === 1 &&
+      chunkReason === "context" &&
+      textProfile.primaryScript === "latin" &&
+      textProfile.containsLatin &&
+      !textProfile.containsArabic &&
+      sentenceLength >= 260
+    ) {
+      return START_TIMEOUT_VERY_LONG_CONTEXT_MS;
     }
 
     if (sentenceLength >= 120 || textLength >= 180) {
@@ -177,6 +196,10 @@
       listMarkerText: sanitizeString(event.listMarkerText, 40),
       chunkCount: sanitizeInteger(event.chunkCount, 0),
       chunkPlan: sanitizeChunkPlan(event.chunkPlan),
+      usedStartupChunks: sanitizeBoolean(event.usedStartupChunks),
+      startupStrategy: sanitizeString(event.startupStrategy, 40),
+      usedRecoveryChunks: sanitizeBoolean(event.usedRecoveryChunks),
+      recoveryStrategy: sanitizeString(event.recoveryStrategy, 40),
       primaryScript: sanitizeString(event.primaryScript, 24),
       isRtl: sanitizeBoolean(event.isRtl),
       containsArabic: sanitizeBoolean(event.containsArabic),
@@ -185,6 +208,8 @@
       configuredStartTimeoutMs: sanitizeInteger(event.configuredStartTimeoutMs, 0),
       retryCount: sanitizeInteger(event.retryCount, 0),
       startLatencyMs: sanitizeInteger(event.startLatencyMs, 0),
+      firstWordLatencyMs: sanitizeInteger(event.firstWordLatencyMs, 0),
+      firstWordBoundaryGapMs: sanitizeInteger(event.firstWordBoundaryGapMs, 0),
       gapFromPreviousSentenceEndMs: sanitizeInteger(event.gapFromPreviousSentenceEndMs, 0),
       failureCode: sanitizeString(event.failureCode, 80),
       message: sanitizeString(event.message, 260),
@@ -222,6 +247,10 @@
       listMarkerText: sanitizeString(attempt.listMarkerText, 40),
       chunkCount: sanitizeInteger(attempt.chunkCount, 0),
       chunkPlan: sanitizeChunkPlan(attempt.chunkPlan),
+      usedStartupChunks: sanitizeBoolean(attempt.usedStartupChunks),
+      startupStrategy: sanitizeString(attempt.startupStrategy, 40),
+      usedRecoveryChunks: sanitizeBoolean(attempt.usedRecoveryChunks),
+      recoveryStrategy: sanitizeString(attempt.recoveryStrategy, 40),
       primaryScript: sanitizeString(attempt.primaryScript, 24),
       isRtl: sanitizeBoolean(attempt.isRtl),
       containsArabic: sanitizeBoolean(attempt.containsArabic),
@@ -233,6 +262,8 @@
       endAt: sanitizeInteger(attempt.endAt, 0),
       lastEventAt: sanitizeInteger(attempt.lastEventAt, 0),
       startLatencyMs: sanitizeInteger(attempt.startLatencyMs, 0),
+      firstWordLatencyMs: sanitizeInteger(attempt.firstWordLatencyMs, 0),
+      firstWordBoundaryGapMs: sanitizeInteger(attempt.firstWordBoundaryGapMs, 0),
       gapFromPreviousSentenceEndMs: sanitizeInteger(attempt.gapFromPreviousSentenceEndMs, 0),
       configuredStartTimeoutMs: sanitizeInteger(attempt.configuredStartTimeoutMs, 0),
       retryCount: sanitizeInteger(attempt.retryCount, 0),
@@ -265,6 +296,159 @@
     };
   }
 
+  function isSupportedRunReportResetUrl(rawUrl) {
+    const url = String(rawUrl || "").trim();
+    return /^https?:\/\//i.test(url);
+  }
+
+  function shouldResetRunReportForPageSessionStart(input = {}) {
+    const senderTabId = sanitizeInteger(input.senderTabId, 0);
+    const activeTabId = sanitizeInteger(input.activeTabId, 0);
+    const frameId = Number.isFinite(Number(input.frameId))
+      ? Math.trunc(Number(input.frameId))
+      : 0;
+    const senderUrl = String(
+      input.senderUrl || input.senderTabUrl || input.messageUrl || ""
+    ).trim();
+    const activeTabUrl = String(input.activeTabUrl || "").trim();
+    const effectiveUrl = senderUrl || activeTabUrl;
+
+    return Boolean(
+      senderTabId &&
+        activeTabId &&
+        senderTabId === activeTabId &&
+        frameId === 0 &&
+        isSupportedRunReportResetUrl(effectiveUrl)
+    );
+  }
+
+  function shouldStopPlaybackForRunReportReset(input = {}) {
+    const senderTabId = sanitizeInteger(input.senderTabId, 0);
+    const activeSessionTabId = sanitizeInteger(input.activeSessionTabId, 0);
+    const activeSessionMode = sanitizeString(input.activeSessionMode, 40);
+    return Boolean(
+      senderTabId &&
+        activeSessionTabId &&
+        senderTabId === activeSessionTabId &&
+        activeSessionMode === "page_reader"
+    );
+  }
+
+  function compareRunReportAttemptsByRecency(left, right) {
+    const leftAt = Number(
+      left.lastEventAt ||
+        left.endAt ||
+        left.startAt ||
+        left.speakInvokedAt ||
+        left.requestedAt ||
+        0
+    );
+    const rightAt = Number(
+      right.lastEventAt ||
+        right.endAt ||
+        right.startAt ||
+        right.speakInvokedAt ||
+        right.requestedAt ||
+        0
+    );
+    return rightAt - leftAt;
+  }
+
+  function sortRunReportAttempts(rawAttempts) {
+    return Array.isArray(rawAttempts)
+      ? rawAttempts
+          .map((attempt) => sanitizeRunReportAttempt(attempt))
+          .sort(compareRunReportAttemptsByRecency)
+          .slice(0, REPORT_MAX_ATTEMPTS)
+      : [];
+  }
+
+  function isRecoveredRunReportAttempt(rawAttempt) {
+    const attempt = sanitizeRunReportAttempt(rawAttempt);
+    return (
+      sanitizeInteger(attempt.retryCount, 0) > 0 &&
+      sanitizeString(attempt.status, 40).toLowerCase() === "finished" &&
+      !sanitizeString(attempt.failureCode, 80)
+    );
+  }
+
+  function countRecoveredRunReportStarts(rawAttempts) {
+    return Array.isArray(rawAttempts)
+      ? rawAttempts.reduce((count, attempt) => {
+          return count + (isRecoveredRunReportAttempt(attempt) ? 1 : 0);
+        }, 0)
+      : 0;
+  }
+
+  function collectStartedRunReportLatencies(rawAttempts) {
+    return Array.isArray(rawAttempts)
+      ? rawAttempts
+          .map((attempt) => sanitizeRunReportAttempt(attempt))
+          .filter((attempt) => {
+            return (
+              sanitizeInteger(attempt.startAt, 0) > 0 &&
+              sanitizeInteger(attempt.startLatencyMs, 0) > 0
+            );
+          })
+          .map((attempt) => sanitizeInteger(attempt.startLatencyMs, 0))
+          .sort((left, right) => left - right)
+      : [];
+  }
+
+  function computeMedianLatencyMs(sortedLatencies) {
+    if (!Array.isArray(sortedLatencies) || !sortedLatencies.length) {
+      return 0;
+    }
+
+    const middleIndex = Math.floor(sortedLatencies.length / 2);
+    if (sortedLatencies.length % 2 === 1) {
+      return sanitizeInteger(sortedLatencies[middleIndex], 0);
+    }
+
+    return Math.round(
+      (sanitizeInteger(sortedLatencies[middleIndex - 1], 0) +
+        sanitizeInteger(sortedLatencies[middleIndex], 0)) /
+        2
+    );
+  }
+
+  function computeNearestRankLatencyMs(sortedLatencies, percentile) {
+    if (!Array.isArray(sortedLatencies) || !sortedLatencies.length) {
+      return 0;
+    }
+
+    const safePercentile = Number.isFinite(Number(percentile))
+      ? Math.max(0, Math.min(1, Number(percentile)))
+      : 0;
+    const rank = Math.max(1, Math.ceil(sortedLatencies.length * safePercentile));
+    return sanitizeInteger(
+      sortedLatencies[Math.min(sortedLatencies.length - 1, rank - 1)],
+      0
+    );
+  }
+
+  function buildRunReportInsights(rawReport) {
+    const report = rawReport && typeof rawReport === "object" ? rawReport : {};
+    const attempts = sortRunReportAttempts(report.attempts);
+    const latestAttempt = attempts[0] || null;
+    const startedLatencies = collectStartedRunReportLatencies(attempts);
+    const latestFailureCode =
+      latestAttempt && latestAttempt.failureCode ? latestAttempt.failureCode : "";
+    return {
+      latestAttempt,
+      lastFailureCode: latestFailureCode,
+      lastFailureMessage:
+        latestFailureCode && latestAttempt ? latestAttempt.message : "",
+      recoveredStarts: countRecoveredRunReportStarts(attempts),
+      startLatencySampleCount: startedLatencies.length,
+      startLatencyMedianMs: computeMedianLatencyMs(startedLatencies),
+      startLatencyP95Ms: computeNearestRankLatencyMs(startedLatencies, 0.95),
+      startLatencyMaxMs: startedLatencies.length
+        ? sanitizeInteger(startedLatencies[startedLatencies.length - 1], 0)
+        : 0,
+    };
+  }
+
   function buildDefaultRunReport() {
     return {
       schemaVersion: REPORT_SCHEMA_VERSION,
@@ -278,6 +462,7 @@
         resumes: 0,
         stops: 0,
         errors: 0,
+        recoveredStarts: 0,
       },
       attempts: [],
       events: [],
@@ -290,6 +475,7 @@
     const counters = report.counters && typeof report.counters === "object"
       ? report.counters
       : {};
+    const attempts = sortRunReportAttempts(report.attempts);
     return {
       schemaVersion: REPORT_SCHEMA_VERSION,
       lastUpdatedAt: sanitizeInteger(report.lastUpdatedAt, 0),
@@ -302,17 +488,9 @@
         resumes: sanitizeReportCounter(counters.resumes),
         stops: sanitizeReportCounter(counters.stops),
         errors: sanitizeReportCounter(counters.errors),
+        recoveredStarts: countRecoveredRunReportStarts(attempts),
       },
-      attempts: Array.isArray(report.attempts)
-        ? report.attempts
-            .map((attempt) => sanitizeRunReportAttempt(attempt))
-            .sort((left, right) => {
-              const leftAt = Number(left.lastEventAt || left.endAt || left.startAt || left.speakInvokedAt || left.requestedAt || 0);
-              const rightAt = Number(right.lastEventAt || right.endAt || right.startAt || right.speakInvokedAt || right.requestedAt || 0);
-              return rightAt - leftAt;
-            })
-            .slice(0, REPORT_MAX_ATTEMPTS)
-        : [],
+      attempts,
       events: Array.isArray(report.events)
         ? report.events
             .map((event) => sanitizeRunReportEvent(event))
@@ -365,11 +543,17 @@
     REPORT_MAX_EXTENSION_ERRORS,
     START_RETRY_DELAY_MS,
     START_TIMEOUT_DEFAULT_MS,
+    START_TIMEOUT_STARTUP_CLAUSE_MS,
     START_TIMEOUT_LONG_MS,
+    START_TIMEOUT_VERY_LONG_CONTEXT_MS,
     START_TIMEOUT_RTL_MS,
     START_TIMEOUT_AUTO_ADVANCE_RTL_LIST_MS,
     analyzeTextProfile,
+    buildRunReportInsights,
     buildDefaultRunReport,
+    countRecoveredRunReportStarts,
+    isSupportedRunReportResetUrl,
+    isRecoveredRunReportAttempt,
     pickRunReportCounter,
     resolveStartTimeoutMs,
     sanitizeChunkPlan,
@@ -377,6 +561,8 @@
     sanitizeRunReport,
     sanitizeRunReportAttempt,
     sanitizeRunReportEvent,
+    shouldResetRunReportForPageSessionStart,
+    shouldStopPlaybackForRunReportReset,
   };
 
   globalScope.EdgeVoiceReaderDebugCore = api;

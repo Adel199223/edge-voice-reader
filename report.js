@@ -46,12 +46,34 @@ function formatEventType(type) {
     .join(" ");
 }
 
+function formatLatencySample(summary) {
+  const sampleCount = Math.max(
+    0,
+    Math.trunc(Number(summary && summary.startLatencySampleCount ? summary.startLatencySampleCount : 0))
+  );
+  return sampleCount
+    ? `${sampleCount} started attempt${sampleCount === 1 ? "" : "s"}`
+    : "No started attempts yet";
+}
+
+function formatLatencyMs(value, sampleCount) {
+  const numeric = Math.max(0, Math.trunc(Number(value || 0)));
+  return sampleCount > 0 && numeric > 0
+    ? `${numeric} ms`
+    : "No started attempts yet";
+}
+
 function renderSummary(report) {
+  const summary = report && report.summary ? report.summary : {};
   const status = report && report.status ? report.status : {};
   const runtime = status.runtime || {};
   const availability = status.selectedVoiceAvailability || {};
   const state = status.state || {};
   const selectedVoice = status.selectedVoice || {};
+  const latencySampleCount = Math.max(
+    0,
+    Math.trunc(Number(summary.startLatencySampleCount || 0))
+  );
 
   const playbackState = runtime.lastError
     ? "Error"
@@ -80,6 +102,23 @@ function renderSummary(report) {
         : "No recent text",
     ],
     ["Last Error", runtime.lastError || "No recent runtime error"],
+    [
+      "Latest Settled Failure",
+      summary.lastFailureMessage || "No settled failure in the latest attempt",
+    ],
+    ["Latency Sample", formatLatencySample(summary)],
+    [
+      "Median Start",
+      formatLatencyMs(summary.startLatencyMedianMs, latencySampleCount),
+    ],
+    [
+      "P95 Start",
+      formatLatencyMs(summary.startLatencyP95Ms, latencySampleCount),
+    ],
+    [
+      "Slowest Start",
+      formatLatencyMs(summary.startLatencyMaxMs, latencySampleCount),
+    ],
     ["Report Updated", formatDateTime(report.lastUpdatedAt)],
     ["Snapshot Generated", formatDateTime(report.generatedAt)],
   ];
@@ -113,6 +152,7 @@ function renderCounters(report) {
     ["Resumes", counters.resumes || 0],
     ["Stops", counters.stops || 0],
     ["Errors", counters.errors || 0],
+    ["Recovered Starts", counters.recoveredStarts || 0],
   ];
 
   counterGrid.innerHTML = "";
@@ -192,6 +232,45 @@ function renderEvents(report) {
     }
     if (event.note) {
       chips.appendChild(createChip(event.note));
+    }
+    if (event.retryCount) {
+      const retryCount = Math.max(0, Math.trunc(Number(event.retryCount || 0)));
+      const retryLabel =
+        retryCount === 1 ? "1 retry" : `${retryCount} retries`;
+      const recoveredStart =
+        retryCount > 0 &&
+        !event.failureCode &&
+        String(event.settledByEvent || "").toLowerCase() === "end";
+      chips.appendChild(
+        createChip(recoveredStart ? `Recovered start (${retryLabel})` : retryLabel)
+      );
+    }
+    if (event.usedStartupChunks) {
+      chips.appendChild(
+        createChip(
+          event.startupStrategy
+            ? `Startup chunks (${event.startupStrategy})`
+            : "Startup chunks"
+        )
+      );
+    }
+    if (event.usedRecoveryChunks) {
+      chips.appendChild(
+        createChip(
+          event.recoveryStrategy
+            ? `Recovery chunks (${event.recoveryStrategy})`
+            : "Recovery chunks"
+        )
+      );
+    }
+    if (event.firstWordLatencyMs) {
+      chips.appendChild(createChip(`First word ${event.firstWordLatencyMs} ms`));
+    }
+    if (event.firstWordBoundaryGapMs) {
+      chips.appendChild(createChip(`Start to word ${event.firstWordBoundaryGapMs} ms`));
+    }
+    if (event.failureCode) {
+      chips.appendChild(createChip(formatEventType(event.failureCode)));
     }
     if (event.error) {
       chips.appendChild(createChip(event.error, "error"));

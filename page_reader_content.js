@@ -587,6 +587,25 @@
     ).catch(() => {});
   }
 
+  async function reportPageSessionStart() {
+    if (
+      !chrome.runtime ||
+      !chrome.runtime.id ||
+      window.top !== window
+    ) {
+      return;
+    }
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: "page_session_started",
+        url: location.href || "",
+      });
+    } catch (_error) {
+      // Ignore startup messaging failures during navigation churn.
+    }
+  }
+
   async function copyTextToClipboard(text) {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
       await navigator.clipboard.writeText(text);
@@ -2850,6 +2869,7 @@
   void loadPrefs().then(() => {
     ensureUi();
     scanReadableBlocks();
+    void reportPageSessionStart();
   });
 
   state.mutationObserver = new MutationObserver(() => {

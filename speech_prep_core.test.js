@@ -5,6 +5,8 @@ const test = require("node:test");
 
 const {
   buildChunkPlan,
+  buildRecoveryChunks,
+  buildStartupChunks,
   buildSpeechChunks,
 } = require("./speech_prep_core.js");
 
@@ -121,4 +123,68 @@ test("buildSpeechChunks exposes chunk profiles and buildChunkPlan metadata", () 
   assert.equal(typeof chunks[0].profile.primaryScript, "string");
   assert.equal(chunkPlan.length, chunks.length);
   assert.equal(chunkPlan.some((chunk) => chunk.langHint === "en-US"), true);
+});
+
+test("buildRecoveryChunks splits long English context into clause-sized chunks", () => {
+  const text =
+    'Right now, the browser app is already structurally simplified, but the first screen still exposes too much web-console texture: Simple Workspace Shell, App Mode, Refresh, workspace/live/shadow language, native file input, a raw output path field, Action Rail wording, and a Run Status card that lacks the Qt-style progress bar metrics even though the user guide describes one.';
+  const chunks = buildRecoveryChunks(text, {
+    documentLang: "en-US",
+    langHint: "en-US",
+  });
+
+  assert.equal(chunks.length >= 3, true);
+  assert.equal(
+    chunks.every((chunk) => chunk.reason === "recovery_clause"),
+    true
+  );
+  assert.equal(
+    chunks.map((chunk) => chunk.text).join(" "),
+    text
+  );
+  assert.equal(
+    chunks.every((chunk) => chunk.textLength <= 190),
+    true
+  );
+  assert.deepEqual(
+    buildChunkPlan(chunks).map((chunk) => chunk.reason),
+    chunks.map((chunk) => chunk.reason)
+  );
+});
+
+test("buildStartupChunks splits long English context into a short lead chunk and ordered startup clauses", () => {
+  const text =
+    'Right now, the browser app is already structurally simplified, but the first screen still exposes too much "web-console" texture: `Simple Workspace Shell`, App Mode, Refresh, workspace/live/shadow language, native file input, a raw output path field, "Action Rail" wording, and a Run Status card that still lacks the Qt-style progress bar metrics the guide describes.';
+  const chunks = buildStartupChunks(text, {
+    documentLang: "en-US",
+    langHint: "en-US",
+  });
+
+  assert.equal(chunks.length >= 3, true);
+  assert.equal(chunks[0].reason, "startup_clause");
+  assert.equal(chunks[0].textLength >= 70, true);
+  assert.equal(chunks[0].textLength <= 130, true);
+  assert.equal(
+    chunks.every((chunk) => chunk.reason === "startup_clause"),
+    true
+  );
+  assert.equal(
+    chunks.map((chunk) => chunk.text).join(" "),
+    text
+  );
+});
+
+test("buildSpeechChunks keeps strong span isolation so startup splitting is not needed", () => {
+  const text =
+    "The setup uses https://example.com/docs, support@example.com, ./workspace/live/config.json, and Build.Run_Status before the Arabic label مرحبا appears in the same long sentence.";
+  const chunks = buildSpeechChunks(text, {
+    documentLang: "en-US",
+    sentenceStart: 0,
+  });
+
+  assert.equal(chunks.length > 1, true);
+  assert.equal(chunks.some((chunk) => chunk.reason === "url"), true);
+  assert.equal(chunks.some((chunk) => chunk.reason === "email"), true);
+  assert.equal(chunks.some((chunk) => chunk.reason === "path"), true);
+  assert.equal(chunks.some((chunk) => chunk.reason === "code"), true);
 });

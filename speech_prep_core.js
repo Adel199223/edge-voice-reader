@@ -5,6 +5,15 @@
   const LATIN_PATTERN = /[A-Za-z\u00C0-\u024F]/g;
   const RTL_PATTERN = /[\u0590-\u08FF]/g;
   const MAX_CHUNK_PLAN = 8;
+  const LONG_CONTEXT_RECOVERY_MIN_CHARS = 260;
+  const LONG_CONTEXT_RECOVERY_TARGET_CHARS = 140;
+  const LONG_CONTEXT_RECOVERY_HARD_MAX_CHARS = 190;
+  const LONG_CONTEXT_RECOVERY_MIN_CHARS_PER_CHUNK = 60;
+  const STARTUP_LEAD_MIN_CHARS = 70;
+  const STARTUP_LEAD_TARGET_MAX_CHARS = 110;
+  const STARTUP_LEAD_HARD_MAX_CHARS = 130;
+  const RECOVERY_CLAUSE_REASON = "recovery_clause";
+  const STARTUP_CLAUSE_REASON = "startup_clause";
   const WRAPPER_OPENERS = Object.freeze({
     "(": ")",
     "[": "]",
@@ -387,6 +396,339 @@
     return mergeWeakChunks(chunks, text);
   }
 
+  function collectClauseBreakIndexes(text) {
+    const indexes = new Set();
+    const boundaryPattern = /(?:[,;:](?=\s)|[)\]](?=[,;:]?\s)|(?:--|—|–)(?=\s))/g;
+    let match;
+    while ((match = boundaryPattern.exec(text))) {
+      let nextIndex = match.index + match[0].length;
+      while (nextIndex < text.length && /\s/.test(text[nextIndex])) {
+        nextIndex += 1;
+      }
+      if (nextIndex > 0 && nextIndex < text.length) {
+        indexes.add(nextIndex);
+      }
+    }
+    return Array.from(indexes).sort((left, right) => left - right);
+  }
+
+  function normalizeBreakIndex(text, index) {
+    let nextIndex = Math.max(0, Math.min(text.length, sanitizeInteger(index, 0)));
+    while (nextIndex < text.length && /\s/.test(text[nextIndex])) {
+      nextIndex += 1;
+    }
+    return nextIndex;
+  }
+
+  function findWhitespaceBreakIndex(
+    text,
+    minIndex,
+    preferredEnd,
+    hardEnd,
+    options = {}
+  ) {
+    const preferEarliest = options.preferEarliest === true;
+    if (preferEarliest) {
+      for (
+        let index = Math.max(0, minIndex);
+        index < Math.min(preferredEnd, text.length);
+        index += 1
+      ) {
+        if (/\s/.test(text[index])) {
+          return normalizeBreakIndex(text, index);
+        }
+      }
+
+      for (
+        let index = Math.max(0, preferredEnd);
+        index < Math.min(hardEnd, text.length);
+        index += 1
+      ) {
+        if (/\s/.test(text[index])) {
+          return normalizeBreakIndex(text, index);
+        }
+      }
+      return 0;
+    }
+
+    for (let index = Math.min(preferredEnd, text.length - 1); index > minIndex; index -= 1) {
+      if (/\s/.test(text[index])) {
+        return normalizeBreakIndex(text, index);
+      }
+    }
+
+    for (let index = Math.min(hardEnd, text.length - 1); index > preferredEnd; index -= 1) {
+      if (/\s/.test(text[index])) {
+        return normalizeBreakIndex(text, index);
+      }
+    }
+
+    return 0;
+  }
+
+  function findClauseBreakIndex(
+    breakIndexes,
+    minIndex,
+    preferredEnd,
+    hardEnd,
+    options = {}
+  ) {
+    const preferEarliest = options.preferEarliest === true;
+    if (preferEarliest) {
+      return (
+        breakIndexes.find(
+          (candidate) => candidate >= minIndex && candidate <= preferredEnd
+        ) ||
+        breakIndexes.find(
+          (candidate) => candidate > preferredEnd && candidate <= hardEnd
+        ) ||
+        0
+      );
+    }
+
+    let splitIndex = 0;
+    for (const candidate of breakIndexes) {
+      if (candidate > minIndex && candidate <= preferredEnd) {
+        splitIndex = candidate;
+      }
+    }
+    if (!splitIndex) {
+      splitIndex =
+        breakIndexes.find(
+          (candidate) => candidate > preferredEnd && candidate <= hardEnd
+        ) || 0;
+    }
+    return splitIndex;
+  }
+
+  function mergeShortRecoveryRanges(ranges) {
+    const merged = [];
+    for (const range of ranges) {
+      const previous = merged[merged.length - 1];
+      if (
+        previous &&
+        range.end - range.start < LONG_CONTEXT_RECOVERY_MIN_CHARS_PER_CHUNK / 2
+      ) {
+        previous.end = range.end;
+        continue;
+      }
+      merged.push({ ...range });
+    }
+
+    if (merged.length > 1) {
+      const last = merged[merged.length - 1];
+      if (last.end - last.start < LONG_CONTEXT_RECOVERY_MIN_CHARS_PER_CHUNK / 2) {
+        merged[merged.length - 2].end = last.end;
+        merged.pop();
+      }
+    }
+
+    return merged;
+  }
+
+  function buildRecoveryClauseRanges(text) {
+    const ranges = [];
+    const breakIndexes = collectClauseBreakIndexes(text);
+    let start = 0;
+
+    while (start < text.length) {
+      const remaining = text.length - start;
+      if (remaining <= LONG_CONTEXT_RECOVERY_TARGET_CHARS) {
+        ranges.push({
+          start,
+          end: text.length,
+        });
+        break;
+      }
+
+      const minIndex = Math.min(
+        text.length,
+        start + LONG_CONTEXT_RECOVERY_MIN_CHARS_PER_CHUNK
+      );
+      const preferredEnd = Math.min(
+        text.length,
+        start + LONG_CONTEXT_RECOVERY_TARGET_CHARS
+      );
+      const hardEnd = Math.min(
+        text.length,
+        start + LONG_CONTEXT_RECOVERY_HARD_MAX_CHARS
+      );
+
+      let splitIndex = findClauseBreakIndex(
+        breakIndexes,
+        minIndex,
+        preferredEnd,
+        hardEnd
+      );
+      if (!splitIndex) {
+        splitIndex = findWhitespaceBreakIndex(
+          text,
+          minIndex,
+          preferredEnd,
+          hardEnd
+        );
+      }
+      if (!splitIndex) {
+        splitIndex = hardEnd;
+      }
+
+      splitIndex = normalizeBreakIndex(text, splitIndex);
+      if (text.length - splitIndex < LONG_CONTEXT_RECOVERY_MIN_CHARS_PER_CHUNK / 2) {
+        splitIndex = text.length;
+      }
+      if (splitIndex <= start) {
+        break;
+      }
+
+      ranges.push({
+        start,
+        end: splitIndex,
+      });
+      start = splitIndex;
+    }
+
+    return mergeShortRecoveryRanges(ranges);
+  }
+
+  function buildStartupClauseRanges(text) {
+    const breakIndexes = collectClauseBreakIndexes(text);
+    const minIndex = Math.min(text.length, STARTUP_LEAD_MIN_CHARS);
+    const preferredEnd = Math.min(text.length, STARTUP_LEAD_TARGET_MAX_CHARS);
+    const hardEnd = Math.min(text.length, STARTUP_LEAD_HARD_MAX_CHARS);
+    let splitIndex = findClauseBreakIndex(
+      breakIndexes,
+      minIndex,
+      preferredEnd,
+      hardEnd,
+      { preferEarliest: true }
+    );
+    if (!splitIndex) {
+      splitIndex = findWhitespaceBreakIndex(
+        text,
+        minIndex,
+        preferredEnd,
+        hardEnd,
+        { preferEarliest: true }
+      );
+    }
+    if (!splitIndex) {
+      splitIndex = hardEnd;
+    }
+
+    splitIndex = normalizeBreakIndex(text, splitIndex);
+    if (splitIndex <= 0 || splitIndex >= text.length) {
+      return [
+        {
+          start: 0,
+          end: text.length,
+        },
+      ];
+    }
+
+    return [
+      {
+        start: 0,
+        end: splitIndex,
+      },
+      ...buildRecoveryClauseRanges(text.slice(splitIndex)).map((range) => ({
+        start: splitIndex + range.start,
+        end: splitIndex + range.end,
+      })),
+    ];
+  }
+
+  function shouldBuildRecoveryChunks(text, options = {}) {
+    const profile =
+      options.textProfile && typeof options.textProfile === "object"
+        ? options.textProfile
+        : analyzeTextProfile(text);
+    return Boolean(
+      text.length >= LONG_CONTEXT_RECOVERY_MIN_CHARS &&
+        profile.primaryScript === "latin" &&
+        profile.containsLatin &&
+        !profile.containsArabic &&
+        !profile.isRtl
+    );
+  }
+
+  function buildRecoveryChunks(rawText, options = {}) {
+    const text = normalizeWhitespace(rawText);
+    if (!text) {
+      return [];
+    }
+
+    const textProfile =
+      options.textProfile && typeof options.textProfile === "object"
+        ? options.textProfile
+        : analyzeTextProfile(text);
+    const ranges = shouldBuildRecoveryChunks(text, { textProfile })
+      ? buildRecoveryClauseRanges(text)
+      : [
+          {
+            start: 0,
+            end: text.length,
+          },
+        ];
+
+    return ranges.map((range, index) => {
+      const chunkText = text.slice(range.start, range.end).trim();
+      const profile = analyzeTextProfile(chunkText);
+      return {
+        index,
+        start: range.start,
+        end: range.end,
+        text: chunkText,
+        textLength: chunkText.length,
+        langHint: resolveChunkLangHint(chunkText, {
+          langHint: options.langHint,
+          documentLang: options.documentLang,
+        }),
+        profile,
+        reason:
+          ranges.length > 1 ? RECOVERY_CLAUSE_REASON : "context",
+      };
+    });
+  }
+
+  function buildStartupChunks(rawText, options = {}) {
+    const text = normalizeWhitespace(rawText);
+    if (!text) {
+      return [];
+    }
+
+    const textProfile =
+      options.textProfile && typeof options.textProfile === "object"
+        ? options.textProfile
+        : analyzeTextProfile(text);
+    const ranges = shouldBuildRecoveryChunks(text, { textProfile })
+      ? buildStartupClauseRanges(text)
+      : [
+          {
+            start: 0,
+            end: text.length,
+          },
+        ];
+
+    return ranges.map((range, index) => {
+      const chunkText = text.slice(range.start, range.end).trim();
+      const profile = analyzeTextProfile(chunkText);
+      return {
+        index,
+        start: range.start,
+        end: range.end,
+        text: chunkText,
+        textLength: chunkText.length,
+        langHint: resolveChunkLangHint(chunkText, {
+          langHint: options.langHint,
+          documentLang: options.documentLang,
+        }),
+        profile,
+        reason:
+          ranges.length > 1 ? STARTUP_CLAUSE_REASON : "context",
+      };
+    });
+  }
+
   function resolveRangeLangHint(chunkStart, chunkEnd, sentenceStart, langRanges) {
     const absoluteStart = sanitizeInteger(sentenceStart, 0) + sanitizeInteger(chunkStart, 0);
     const absoluteEnd = Math.max(absoluteStart, sanitizeInteger(sentenceStart, 0) + sanitizeInteger(chunkEnd, 0));
@@ -515,6 +857,8 @@
     analyzeTextProfile,
     applySpokenPrefix,
     buildChunkPlan,
+    buildRecoveryChunks,
+    buildStartupChunks,
     buildSpeechChunks,
     normalizeLangHint: sanitizeLangHint,
     prepareSpeechChunks,
